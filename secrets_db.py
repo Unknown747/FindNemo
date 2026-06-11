@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 DB_PATH = os.path.join('crypto_output', 'secrets_db.json')
-_VERSION = 4   # bumped: fingerprint now based on normalised core value
+_VERSION = 6   # bumped: mnemonic_12 subset-of-mnemonic_24 deduplication pass
 
 # Types that carry an actual extractable secret value
 _TYPES_WITH_VALUE = {
@@ -49,14 +49,16 @@ def _normalise_core(match_type: str, raw_val: str) -> str:
             return m.group().lower()
 
     # BIP-39 mnemonics → normalised word sequence
-    if any(k in match_type for k in ('mnemonic_24', 'env_mnemonic')):
-        m = _WORDS24.search(v)
-        if m:
-            return ' '.join(m.group().lower().split())
-    if 'mnemonic_12' in match_type:
-        m = _WORDS12.search(v)
-        if m:
-            return ' '.join(m.group().lower().split())
+    # Always try 24-word first so the same seed isn't stored as two fingerprints
+    # (mnemonic_12 dork can capture a 24-word mnemonic's first 12 words, and
+    #  env_mnemonic with 12 words used to fall through to the raw string)
+    if any(k in match_type for k in ('mnemonic_12', 'mnemonic_24', 'env_mnemonic')):
+        m24 = _WORDS24.search(v)
+        if m24:
+            return ' '.join(m24.group().lower().split())
+        m12 = _WORDS12.search(v)
+        if m12:
+            return ' '.join(m12.group().lower().split())
 
     # API keys (infura, alchemy) → extract the credential token part
     if any(k in match_type for k in ('infura_secret', 'alchemy_key')):
@@ -109,13 +111,28 @@ class SecretsDB:
                     d = json.load(f)
                 if d.get('version') == _VERSION:
                     return d
-                # Older version → migrate by re-fingerprinting entries
-                if d.get('version') in (2, 3) and 'entries' in d:
+                # Older versions → migrate by re-fingerprinting entries
+                if d.get('version') in (2, 3, 4, 5) and 'entries' in d:
                     return self._migrate(d)
             except Exception as e:
                 logger.warning(f'secrets_db: could not load {self._path}: {e}')
         return {'version': _VERSION, 'total': 0,
                 'last_updated': _now_iso(), 'entries': {}}
+
+    @staticmethod
+    def _merge_entry(existing: dict, incoming: dict) -> None:
+        """Merge incoming into existing (in-place): sum counts, keep best confidence."""
+        existing['scan_count'] = existing.get('scan_count', 1) + incoming.get('scan_count', 1)
+        if incoming.get('confidence', 0) > existing.get('confidence', 0):
+            existing['confidence'] = incoming['confidence']
+            existing['risk_label'] = incoming.get('risk_label', existing.get('risk_label'))
+        # Accumulate repos list
+        repos = existing.setdefault('repos', [])
+        seen_urls = {r.get('commit_url') for r in repos}
+        for r in incoming.get('repos', []):
+            if r.get('commit_url') not in seen_urls and len(repos) < 20:
+                repos.append(r)
+                seen_urls.add(r.get('commit_url'))
 
     def _migrate(self, old: dict) -> dict:
         """Re-fingerprint all entries with the new normalisation logic and dedup."""
@@ -127,18 +144,19 @@ class SecretsDB:
             core = _normalise_core(match_type, secret_val)
             new_fp = _fingerprint(core)
             if new_fp in new_entries:
-                # Merge: keep higher confidence, sum scan counts
-                existing = new_entries[new_fp]
-                existing['scan_count'] += e.get('scan_count', 1)
-                if e.get('confidence', 0) > existing.get('confidence', 0):
-                    existing['confidence'] = e['confidence']
-                    existing['risk_label'] = e.get('risk_label', existing['risk_label'])
+                self._merge_entry(new_entries[new_fp], e)
                 dupes += 1
             else:
+                e = dict(e)   # shallow copy so we don't mutate the old dict
                 e['fingerprint'] = new_fp
                 e['id'] = new_fp[:16]
                 e['secret'] = core   # store normalised value
                 new_entries[new_fp] = e
+
+        # ── Extra pass: merge mnemonic_12 entries that are a word-prefix of a
+        #    mnemonic_24 entry (same seed, different dork captured different length)
+        dupes += self._dedup_mnemonic_subsets(new_entries)
+
         logger.info(f'secrets_db: migrated {len(old.get("entries",{}))} entries → '
                     f'{len(new_entries)} unique ({dupes} duplicates merged)')
         result = {'version': _VERSION, 'total': len(new_entries),
@@ -152,6 +170,40 @@ class SecretsDB:
         except Exception as e:
             logger.warning(f'secrets_db: migration save failed: {e}')
         return result
+
+    @staticmethod
+    def _dedup_mnemonic_subsets(entries: dict) -> int:
+        """
+        Merge mnemonic_12 entries whose words are a prefix of a mnemonic_24 entry.
+        Returns number of entries removed.
+        """
+        # Build word-prefix index for mnemonic_24 entries
+        # key = tuple of words → fingerprint
+        prefix_index: dict[tuple, str] = {}
+        for fp, e in entries.items():
+            if 'mnemonic_24' in e.get('type', ''):
+                words = tuple(e['secret'].split())
+                # Store every prefix ≥ 12 words so any shorter match can find it
+                for length in range(12, len(words)):
+                    prefix_index[words[:length]] = fp
+
+        to_remove: list[str] = []
+        for fp, e in entries.items():
+            if fp in to_remove:
+                continue
+            if 'mnemonic_12' not in e.get('type', '') and 'env_mnemonic' not in e.get('type', ''):
+                continue
+            words = tuple(e['secret'].split())
+            parent_fp = prefix_index.get(words)
+            if parent_fp and parent_fp != fp and parent_fp not in to_remove:
+                # Merge this 12-word entry into the 24-word parent
+                SecretsDB._merge_entry(entries[parent_fp], e)
+                to_remove.append(fp)
+
+        for fp in to_remove:
+            del entries[fp]
+
+        return len(to_remove)
 
     def _save(self):
         """Must be called with self._lock held."""
