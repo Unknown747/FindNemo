@@ -317,52 +317,112 @@ def score_finding(message, crypto_matches, dork_tier='MEDIUM'):
 
 
 # ---------------------------------------------------------------------------
-# GitHub API
+# GitHub API  (Commits  +  Code/file search)
 # ---------------------------------------------------------------------------
 
 COMMIT_API = 'https://api.github.com/search/commits'
+CODE_API   = 'https://api.github.com/search/code'
 
-def query_commits(dork, page=1, _depth=0):
+# ── Code-search dorks: target file contents where real secrets live ─────────
+# Format: (query, tier, description)
+CODE_DORKS = [
+    # .env files — the most common place secrets leak
+    ('PRIVATE_KEY=0x filename:.env',                  'CRITICAL'),
+    ('MNEMONIC= filename:.env',                       'CRITICAL'),
+    ('PRIVATE_KEY=0x extension:env',                  'CRITICAL'),
+    ('MNEMONIC= extension:env',                       'CRITICAL'),
+    # Hardhat / Foundry / Truffle config files
+    ('privateKey: 0x filename:hardhat.config.js',     'CRITICAL'),
+    ('privateKey: 0x filename:hardhat.config.ts',     'CRITICAL'),
+    ('PRIVATE_KEY filename:hardhat.config.js',        'HIGH'),
+    ('mnemonic filename:hardhat.config.js',           'HIGH'),
+    ('private_key filename:foundry.toml',             'CRITICAL'),
+    ('accounts filename:truffle-config.js',           'HIGH'),
+    # PEM keys in any file
+    ('BEGIN EC PRIVATE KEY',                          'CRITICAL'),
+    ('BEGIN RSA PRIVATE KEY',                         'CRITICAL'),
+    ('BEGIN OPENSSH PRIVATE KEY',                     'CRITICAL'),
+    # Raw env-style assignments in any file
+    ('DEPLOYER_PRIVATE_KEY=0x',                       'CRITICAL'),
+    ('DEPLOYER_MNEMONIC=',                            'CRITICAL'),
+    ('WALLET_PRIVATE_KEY=0x',                         'CRITICAL'),
+    ('INFURA_PROJECT_SECRET= extension:env',          'HIGH'),
+    ('ALCHEMY_API_KEY= extension:env',                'HIGH'),
+    # ethers.js / web3.js code with embedded keys
+    ('new ethers.Wallet("0x',                         'CRITICAL'),
+    ('Wallet.fromMnemonic(',                          'HIGH'),
+    ('web3.eth.accounts.wallet.add("0x',              'CRITICAL'),
+    # secrets.js / secrets.json / config.json
+    ('privateKey filename:secrets.json',              'CRITICAL'),
+    ('mnemonic filename:secrets.json',                'CRITICAL'),
+    ('privateKey filename:secrets.js',                'CRITICAL'),
+    ('"private_key": "0x',                            'CRITICAL'),
+    # .secret files
+    ('extension:secret PRIVATE_KEY',                  'CRITICAL'),
+    ('extension:secret MNEMONIC',                     'CRITICAL'),
+]
+
+
+def _github_request(url, params, extra_accept=None, _depth=0):
+    """Shared rate-limit-aware GitHub GET helper."""
     if _depth > 4:
-        return {}
+        return None
     token = rotator.current()
     headers = rotator.headers(token)
+    if extra_accept:
+        headers['Accept'] = extra_accept
     try:
-        r = requests.get(COMMIT_API, headers=headers, timeout=20, params={
-            'q': dork, 'per_page': 30, 'page': page,
-            'sort': 'committer-date', 'order': 'desc'
-        })
-
+        r = requests.get(url, headers=headers, timeout=20, params=params)
         if r.status_code in (403, 429):
             reset_ts = int(r.headers.get('X-RateLimit-Reset', time.time() + 61))
             if token:
                 rotator.mark_rate_limited(token, reset_ts + 2)
             next_tok = rotator.current()
             if next_tok and next_tok != token:
-                return query_commits(dork, page, _depth + 1)
+                return _github_request(url, params, extra_accept, _depth + 1)
             wait = max(reset_ts - int(time.time()), 10) + 2
-            logger.warning(f'All tokens rate-limited. Waiting {wait}s…')
+            logger.warning(f'Rate-limited — waiting {wait}s…')
             time.sleep(wait)
-            return query_commits(dork, page, _depth + 1)
-
+            return _github_request(url, params, extra_accept, _depth + 1)
         if r.status_code == 422:
-            logger.debug(f'Unprocessable: {dork}')
-            return {}
-
+            return None
         r.raise_for_status()
-        data = r.json()
-        items = data.get('items', [])
-
-        if len(items) == 30 and page < 3:
-            time.sleep(1)
-            nxt = query_commits(dork, page + 1, _depth)
-            items += nxt.get('items', [])
-
-        return {'items': items, 'total_count': data.get('total_count', 0)}
-
+        return r.json()
     except Exception as e:
-        logger.error(f'Query error: {e}')
+        logger.error(f'GitHub request error: {e}')
+        return None
+
+
+def query_commits(dork, page=1, _depth=0):
+    data = _github_request(COMMIT_API, {
+        'q': dork, 'per_page': 30, 'page': page,
+        'sort': 'committer-date', 'order': 'desc'
+    }, _depth=_depth)
+    if not data:
         return {}
+    items = data.get('items', [])
+    if len(items) == 30 and page < 3:
+        time.sleep(1)
+        nxt = query_commits(dork, page + 1, _depth)
+        items += nxt.get('items', [])
+    return {'items': items, 'total_count': data.get('total_count', 0)}
+
+
+def query_code(dork, page=1):
+    """Search GitHub file contents. Returns list of code items."""
+    # text-match accept header gives us the matched fragment in the file
+    accept = 'application/vnd.github.v3.text-match+json'
+    data = _github_request(CODE_API, {
+        'q': dork, 'per_page': 30, 'page': page
+    }, extra_accept=accept)
+    if not data:
+        return []
+    items = data.get('items', [])
+    # Fetch page 2 if full result set
+    if len(items) == 30 and page < 2:
+        time.sleep(1.5)
+        items += query_code(dork, page + 1)
+    return items
 
 
 # ---------------------------------------------------------------------------
@@ -435,9 +495,114 @@ def extract_findings(commit_data, keyword=None, dork_tier='MEDIUM', min_score=65
     return findings, urls
 
 
+def extract_code_findings(code_items, dork_tier='CRITICAL', min_score=65):
+    """
+    Parse results from /search/code.
+
+    Each item has:
+      item['repository']['full_name']
+      item['path']              — file path e.g. ".env", "hardhat.config.js"
+      item['html_url']          — link to the file on GitHub
+      item['text_matches']      — list of {fragment, matches} (needs text-match Accept header)
+
+    We reassemble the fragment as the "message" body and run the same scoring pipeline.
+    """
+    findings = []
+    seen_urls = set()
+
+    for item in code_items:
+        repo     = item.get('repository', {}).get('full_name', 'unknown')
+        path     = item.get('path', '')
+        url      = item.get('html_url', '')
+        sha      = item.get('sha', '')
+
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
+
+        # Collect all text fragments exposed by the text-match header
+        fragments = []
+        for tm in item.get('text_matches', []):
+            frag = tm.get('fragment', '')
+            if frag:
+                fragments.append(frag)
+
+        # Fallback: build a pseudo-message from filename + dork tier
+        if not fragments:
+            fragments = [f'{path}']
+
+        content = '\n'.join(fragments)[:1000]
+
+        crypto_matches = []
+        for pat_name, (pattern, pat_tier) in CRYPTO_PATTERNS.items():
+            m = re.search(pattern, content, re.IGNORECASE)
+            if m:
+                crypto_matches.append({
+                    'type':  pat_name,
+                    'tier':  pat_tier,
+                    'match': m.group()[:200],
+                })
+
+        # If no regex hit, still record the dork as a keyword match
+        if not crypto_matches:
+            crypto_matches.append({
+                'type':  f'file_{path.replace("/","_").replace(".","_")}',
+                'tier':  dork_tier,
+                'match': content[:120],
+            })
+
+        # Boost score for sensitive file names
+        sensitive_files = {'.env', 'secrets.json', 'secrets.js',
+                           'hardhat.config.js', 'hardhat.config.ts',
+                           'truffle-config.js', 'foundry.toml', '.secret'}
+        fname = path.split('/')[-1]
+        if fname in sensitive_files or path.endswith('.env'):
+            dork_tier = 'CRITICAL'
+
+        score, risk_label = score_finding(content, crypto_matches, dork_tier)
+
+        if score < min_score:
+            continue
+
+        findings.append({
+            'repo':           repo,
+            'commit_sha':     sha,
+            'commit_url':     url,
+            'author':         '',
+            'date':           '',
+            'message':        f'[FILE: {path}]\n{content[:400]}',
+            'crypto_matches': crypto_matches,
+            'urls_found':     [],
+            'confidence':     score,
+            'risk_label':     risk_label,
+            'source':         'code',
+            'file_path':      path,
+        })
+
+    return findings
+
+
 # ---------------------------------------------------------------------------
 # Main search runner
 # ---------------------------------------------------------------------------
+
+def _save_to_vault(finding, total_new_db, total_dup_db, log, progress_callback):
+    """Helper: persist one finding to the dedup vault and emit events."""
+    n, d = secrets_db.add_finding(finding)
+    total_new_db += n
+    total_dup_db += d
+    if n:
+        log(f'    💾 Saved {n} new secret(s) to vault')
+    if d:
+        log(f'    ⏭  Skipped {d} duplicate(s) already in vault')
+    if progress_callback and (n or d):
+        progress_callback({
+            'level':      'vault',
+            'message':    f'Vault: {secrets_db.stats()["total"]} unique secrets',
+            'vault_total': secrets_db.stats()['total'],
+        })
+    return total_new_db, total_dup_db
+
 
 def run_crypto_search(keyword=None, output_dir='./crypto_output',
                       rate_limit=5.0, min_score=65,
@@ -451,7 +616,7 @@ def run_crypto_search(keyword=None, output_dir='./crypto_output',
 
     rotator.reload()
     log("=" * 60)
-    log("CRYPTO COMMIT SCANNER  v2.0")
+    log("CRYPTO SECRET SCANNER  v3.0")
     log(f"Keyword   : {keyword or '(all crypto patterns)'}")
     log(f"Min score : {min_score}/100")
     log(f"Tokens    : {rotator.count()}")
@@ -460,53 +625,77 @@ def run_crypto_search(keyword=None, output_dir='./crypto_output',
     if rotator.count() == 0:
         log("WARNING: No GITHUB_TOKEN — rate limited to 60 req/hr", 'warning')
 
-    dorks = get_ordered_dorks(keyword, include_low=include_low_dorks)
-    log(f"Search queries: {len(dorks)} (CRITICAL first)")
-
     all_findings, all_urls = [], set()
-    seen_shas     = set()
-    total_new_db  = 0   # new secrets saved to DB this scan
-    total_dup_db  = 0   # duplicates skipped by DB
+    seen_keys     = set()   # commit_sha OR file_url — dedup within this scan
+    total_new_db  = 0
+    total_dup_db  = 0
+
+    # ── PHASE 1: Code search (file contents) — finds real secrets directly ──
+    code_dorks = list(CODE_DORKS)
+    if keyword:
+        code_dorks = [
+            (f'"{keyword}" PRIVATE_KEY=0x',        'CRITICAL'),
+            (f'"{keyword}" MNEMONIC=',              'CRITICAL'),
+            (f'"{keyword}" BEGIN PRIVATE KEY',      'CRITICAL'),
+            (f'"{keyword}" privateKey filename:hardhat.config.js', 'CRITICAL'),
+            (f'"{keyword}" filename:.env',          'HIGH'),
+        ] + code_dorks
+
+    log(f"[PHASE 1] Code search — {len(code_dorks)} queries targeting file contents")
+    for i, (dork, tier) in enumerate(code_dorks, 1):
+        log(f'  [{i}/{len(code_dorks)}] [{tier}] {dork[:70]}')
+        items = query_code(dork)
+        if not items:
+            log(f'    → 0 files found')
+            time.sleep(rate_limit * 0.4)
+            continue
+
+        findings = extract_code_findings(items, dork_tier=tier, min_score=min_score)
+        new = [f for f in findings if f['commit_url'] not in seen_keys]
+        for f in new:
+            seen_keys.add(f['commit_url'])
+            total_new_db, total_dup_db = _save_to_vault(
+                f, total_new_db, total_dup_db, log, progress_callback)
+
+        all_findings.extend(new)
+        log(f'    → {len(items)} files | {len(new)} passed filter | '
+            f'total: {len(all_findings)}')
+
+        for f in new[:3]:
+            log(f'    [{f["risk_label"]}][{f["confidence"]}] {f["repo"]} '
+                f'— {f.get("file_path","?")} '
+                f'— {", ".join(m["type"] for m in f["crypto_matches"][:2])}')
+
+        time.sleep(rate_limit)
+
+    # ── PHASE 2: Commit message search ──────────────────────────────────────
+    dorks = get_ordered_dorks(keyword, include_low=include_low_dorks)
+    log(f"[PHASE 2] Commit search — {len(dorks)} queries on commit messages")
 
     for i, (tier, dork) in enumerate(dorks, 1):
-        log(f'[{i}/{len(dorks)}] [{tier}] "{dork[:60]}"')
+        log(f'  [{i}/{len(dorks)}] [{tier}] "{dork[:60]}"')
 
         data = query_commits(dork)
         total = data.get('total_count', 0)
 
         if total == 0:
-            log(f'  → No commits found')
+            log(f'    → No commits found')
             time.sleep(rate_limit * 0.5)
             continue
 
         findings, urls = extract_findings(data, keyword,
                                           dork_tier=tier, min_score=min_score)
-
-        new = [f for f in findings if f['commit_sha'] not in seen_shas]
-        for f in new:
-            seen_shas.add(f['commit_sha'])
-
-            # Persist to dedup database — fires immediately on discovery
-            n, d = secrets_db.add_finding(f)
-            total_new_db += n
-            total_dup_db += d
-            if n:
-                log(f'    💾 Saved {n} new secret(s) to vault')
-            if d:
-                log(f'    ⏭  Skipped {d} duplicate(s) already in vault')
-
-            if progress_callback:
-                progress_callback({
-                    'level':   'vault',
-                    'message': f'Vault updated: {secrets_db.stats()["total"]} unique secrets',
-                    'vault_total': secrets_db.stats()['total'],
-                })
-
-        all_findings.extend(new)
         all_urls.update(urls)
 
+        new = [f for f in findings if f['commit_sha'] not in seen_keys]
+        for f in new:
+            seen_keys.add(f['commit_sha'])
+            total_new_db, total_dup_db = _save_to_vault(
+                f, total_new_db, total_dup_db, log, progress_callback)
+
+        all_findings.extend(new)
         passed_pct = f'{(len(new)/max(total,1)*100):.0f}%' if total else '0%'
-        log(f'  → {total} commits | {len(new)} passed filter ({passed_pct}) | '
+        log(f'    → {total} commits | {len(new)} passed ({passed_pct}) | '
             f'total: {len(all_findings)}')
 
         for f in new[:2]:
@@ -564,9 +753,15 @@ def run_crypto_search(keyword=None, output_dir='./crypto_output',
 
     if progress_callback:
         progress_callback({
-            'level': 'done', 'message': 'Search complete',
-            'findings_count': total_f, 'urls_count': len(all_urls),
-            'high_quality_count': len(high_quality), 'quality_pct': round(pct),
+            'level':              'done',
+            'message':            'Search complete',
+            'findings_count':     total_f,
+            'urls_count':         len(all_urls),
+            'high_quality_count': len(high_quality),
+            'quality_pct':        round(pct),
+            'new_secrets':        total_new_db,
+            'dup_secrets':        total_dup_db,
+            'vault_total':        db_stats['total'],
         })
 
     return all_urls, all_findings

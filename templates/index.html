@@ -465,17 +465,30 @@
       const rl = f.risk_label || 'MEDIUM';
       const cls = rl==='CRITICAL'?'critical':rl==='HIGH'?'high':'medium';
       const spc = `score-${cls}`;
+      const isCode = f.source === 'code';
+      const sourceBadge = isCode
+        ? `<span style="background:#1a2a1a;color:var(--green);padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700">FILE</span>`
+        : `<span style="background:#1a1a2a;color:var(--blue);padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700">COMMIT</span>`;
+      const fileBadge = isCode && f.file_path
+        ? `<code style="color:var(--yellow);font-size:11px;margin-left:4px">${esc(f.file_path)}</code>`
+        : '';
       const tags = (f.crypto_matches||[]).map(m => {
         const tc = HIGH_TYPES.includes(m.type) ? (m.tier||'CRITICAL') : '';
         return `<span class="tag ${tc}">${esc(m.type)}</span>`;
       }).join('');
+      const msgDisplay = isCode
+        ? esc((f.message||'').replace(/^\[FILE:.*?\]\n?/,'').slice(0,280))
+        : esc((f.message||'').slice(0,280));
+      const metaLine = isCode
+        ? `${esc(f.repo)} ${fileBadge}`
+        : `${esc(f.author)} · ${esc(f.date)} · <code>${esc((f.commit_sha||'').slice(0,8))}</code>`;
       return `<div class="finding ${cls}">
         <div class="finding-header">
-          <div class="f-repo"><a href="${esc(f.commit_url)}" target="_blank" style="color:inherit;text-decoration:none">${esc(f.repo)}</a></div>
+          <div class="f-repo">${sourceBadge} <a href="${esc(f.commit_url)}" target="_blank" style="color:inherit;text-decoration:none">${esc(f.repo)}</a>${fileBadge}</div>
           <span class="score-pill ${spc}">${esc(rl)} · ${f.confidence}/100</span>
         </div>
-        <div class="f-meta">${esc(f.author)} · ${esc(f.date)} · <code>${esc((f.commit_sha||'').slice(0,8))}</code></div>
-        <div class="f-msg">${esc((f.message||'').slice(0,280))}</div>
+        <div class="f-meta">${isCode ? '' : `${esc(f.author)} · ${esc(f.date)} · <code>${esc((f.commit_sha||'').slice(0,8))}</code>`}</div>
+        <div class="f-msg">${msgDisplay}</div>
         <div class="f-tags">${tags}</div>
       </div>`;
     }).join('');
