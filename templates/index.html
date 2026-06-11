@@ -126,6 +126,9 @@
     .vault-meta { color:var(--muted); font-size:11px; }
     .vault-meta a { color:var(--blue); text-decoration:none; }
     .scan-badge { background:#1a1a3a; color:var(--purple); padding:1px 6px; border-radius:9px; font-size:10px; font-weight:600; }
+    .btn-helio { background:#1a1f2e; color:#f0c040; border:1px solid #f0c040; border-radius:5px; padding:3px 9px; font-size:11px; font-weight:700; cursor:pointer; white-space:nowrap; transition:background .15s; }
+    .btn-helio:hover { background:#f0c040; color:#0d1117; }
+    .helio-toast { position:fixed; bottom:24px; right:24px; background:#f0c040; color:#0d1117; font-weight:700; font-size:13px; padding:9px 18px; border-radius:8px; z-index:9999; opacity:0; pointer-events:none; transition:opacity .25s; }
 
     /* Vault toolbar */
     .vault-toolbar { display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
@@ -281,6 +284,7 @@
               <span class="risk-pill medium"       onclick="setRiskFilter('MEDIUM',this)">MEDIUM</span>
             </div>
             <button class="btn btn-subtle btn-sm" onclick="loadVault()">↺</button>
+            <button class="btn-helio" onclick="openAllInHelio()" title="Buka semua private key & mnemonic di Helio Wallet">🔑 Buka Semua di Helio</button>
             <button class="btn btn-danger  btn-sm" onclick="clearVault()">🗑 Clear Vault</button>
           </div>
 
@@ -310,6 +314,7 @@
   const _PRIVKEY_TYPES  = new Set(['eth_private_key','btc_wif','btc_wif_compressed','raw_hex_key','env_private_key','pem_private_key']);
   const _MNEMONIC_TYPES = new Set(['mnemonic_12','mnemonic_24','env_mnemonic']);
   const _APIKEY_TYPES   = new Set(['infura_secret','alchemy_key']);
+  const _HELIO_TYPES    = new Set([..._PRIVKEY_TYPES, ..._MNEMONIC_TYPES]);
 
   // ── Tabs ──────────────────────────────────────────────────────────────────
   function showTab(n) {
@@ -525,10 +530,16 @@
       const msgDisplay = isCode
         ? esc((f.message||'').replace(/^\[FILE:.*?\]\n?/,'').slice(0,280))
         : esc((f.message||'').slice(0,280));
+      const fHelioMatches = (f.crypto_matches||[]).filter(m => _HELIO_TYPES.has(m.type));
+      const fHelioBtn = fHelioMatches.length
+        ? `<button class="btn-helio" style="padding:2px 7px;font-size:10px;margin-left:6px"
+             onclick="openInHelio(${JSON.stringify(fHelioMatches[0].match||'')},${JSON.stringify(fHelioMatches[0].type)})"
+             title="Copy & buka di Helio Wallet">🔑 Helio</button>`
+        : '';
       return `<div class="finding ${cls}">
         <div class="finding-header">
           <div class="f-repo">${sourceBadge} <a href="${esc(f.commit_url)}" target="_blank" style="color:inherit;text-decoration:none">${esc(f.repo)}</a>${fileBadge}</div>
-          <span class="score-pill ${spc}">${esc(rl)} · ${f.confidence}/100</span>
+          <span class="score-pill ${spc}">${esc(rl)} · ${f.confidence}/100</span>${fHelioBtn}
         </div>
         <div class="f-meta">${isCode ? '' : `${esc(f.author)} · ${esc(f.date)} · <code>${esc((f.commit_sha||'').slice(0,8))}</code>`}</div>
         <div class="f-msg">${msgDisplay}</div>
@@ -627,11 +638,16 @@
              </div>
            </div>`
         : '';
+      const isWalletType = _HELIO_TYPES.has(e.type);
+      const helioBtn = isWalletType
+        ? `<button class="btn-helio" style="padding:2px 7px;font-size:10px" onclick="openInHelio(${JSON.stringify(e.secret||'')},${JSON.stringify(e.type)})" title="Copy & buka di Helio Wallet">🔑 Helio</button>`
+        : '';
       return `<div class="vault-entry ${cls}">
         <div class="vault-header">
           <span class="vault-type">${esc(e.type)}</span>
           <span class="score-pill ${spc}">${esc(rl)} · ${e.confidence}/100</span>
           ${scanBadge}
+          ${helioBtn}
         </div>
         <div class="vault-secret" onclick="copySecret('${esc(e.secret||'')}',this)" title="Click to copy">${esc((e.secret||'').slice(0,120))}${(e.secret||'').length>120?'…':''}</div>
         <div class="vault-meta">
@@ -651,6 +667,49 @@
       el.style.outline = '1px solid var(--green)';
       setTimeout(() => { el.style.outline = orig; }, 800);
     });
+  }
+
+  // ── Helio Wallet checker ──────────────────────────────────────────────────
+  const HELIO_URL = 'https://heliowallet.com/access';
+
+  function _showHelioToast(msg) {
+    const t = document.getElementById('helio-toast');
+    t.textContent = msg;
+    t.style.opacity = '1';
+    setTimeout(() => { t.style.opacity = '0'; }, 2800);
+  }
+
+  function openInHelio(secret, type) {
+    if (!secret) return;
+    navigator.clipboard.writeText(secret).then(() => {
+      window.open(HELIO_URL, '_blank');
+      _showHelioToast('🔑 Secret di-copy! Paste di Helio Wallet yang terbuka.');
+    }).catch(() => {
+      // Clipboard denied — still open the tab, user can copy manually
+      window.open(HELIO_URL, '_blank');
+      _showHelioToast('⚠ Tidak bisa copy otomatis — copy manual dari vault lalu paste di Helio.');
+    });
+  }
+
+  function openAllInHelio() {
+    const targets = _vaultEntries.filter(e => _HELIO_TYPES.has(e.type));
+    if (!targets.length) {
+      alert('Tidak ada private key / mnemonic di vault saat ini.');
+      return;
+    }
+    const MAX = 20;
+    const list = targets.slice(0, MAX);
+    if (!confirm(`Akan membuka ${list.length} tab Helio Wallet sekaligus (dari ${targets.length} entri).\n\nLanjutkan?`)) return;
+
+    // Copy all secrets to clipboard as newline-separated list for reference
+    const allSecrets = list.map((e, i) => `[${i+1}] ${e.type}: ${e.secret}`).join('\n');
+    navigator.clipboard.writeText(allSecrets).catch(() => {});
+
+    // Open tabs with small delay so browser doesn't block popup
+    list.forEach((e, i) => {
+      setTimeout(() => window.open(HELIO_URL, '_blank'), i * 400);
+    });
+    _showHelioToast(`🔑 Membuka ${list.length} tab Helio… Paste secret ke masing-masing tab.`);
   }
 
   async function clearVault() {
@@ -772,5 +831,6 @@
   loadVault();
   setInterval(fetchStatus, 6000);
 </script>
+<div id="helio-toast" class="helio-toast"></div>
 </body>
 </html>
