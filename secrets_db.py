@@ -43,7 +43,7 @@ def _normalise_core(match_type: str, raw_val: str) -> str:
     v = raw_val.strip()
 
     # Hex private keys (eth, raw_hex, env) → bare 64-char hex, lowercase, no 0x
-    if any(k in match_type for k in ('eth_private_key', 'raw_hex_key', 'env_private_key')):
+    if match_type in ('eth_private_key', 'raw_hex_key', 'env_private_key'):
         m = _HEX64.search(v)
         if m:
             return m.group().lower()
@@ -52,7 +52,7 @@ def _normalise_core(match_type: str, raw_val: str) -> str:
     # Always try 24-word first so the same seed isn't stored as two fingerprints
     # (mnemonic_12 dork can capture a 24-word mnemonic's first 12 words, and
     #  env_mnemonic with 12 words used to fall through to the raw string)
-    if any(k in match_type for k in ('mnemonic_12', 'mnemonic_24', 'env_mnemonic')):
+    if match_type in ('mnemonic_12', 'mnemonic_24', 'env_mnemonic'):
         m24 = _WORDS24.search(v)
         if m24:
             return ' '.join(m24.group().lower().split())
@@ -61,7 +61,7 @@ def _normalise_core(match_type: str, raw_val: str) -> str:
             return ' '.join(m12.group().lower().split())
 
     # API keys (infura, alchemy) → extract the credential token part
-    if any(k in match_type for k in ('infura_secret', 'alchemy_key')):
+    if match_type in ('infura_secret', 'alchemy_key'):
         m = _HEX32.search(v)
         if m:
             return m.group().lower()

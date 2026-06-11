@@ -362,7 +362,7 @@
     if (type === 'btc')     return _BTC_TYPES.has(e.type);
     if (type === 'pem')     return _PEM_TYPES.has(e.type);
     if (type === 'api')     return _APIKEY_TYPES.has(e.type);
-    return true;
+    return false;
   }
 
   // ── Tabs ──────────────────────────────────────────────────────────────────
@@ -387,7 +387,8 @@
   }
   function clearLog() { document.getElementById('log').innerHTML = ''; }
   function esc(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
 
   // ── Start / Stop Search ───────────────────────────────────────────────────

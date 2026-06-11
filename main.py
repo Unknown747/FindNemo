@@ -106,6 +106,24 @@ class TokenRotator:
     def count(self):
         return len(self._tokens)
 
+    def soonest_available(self):
+        """Return seconds until the next token is available (0 = available now)."""
+        with self._lock:
+            if not self._tokens:
+                return 0
+            now = time.time()
+            # Check if any token is available right now
+            for t in self._tokens:
+                if t not in self._invalid:
+                    if now >= self._reset_at.get(t, 0):
+                        return 0
+            # All rate-limited — find minimum reset time
+            waits = []
+            for t in self._tokens:
+                if t not in self._invalid:
+                    waits.append(max(self._reset_at.get(t, now) - now, 0))
+            return min(waits) if waits else 0
+
     def current(self):
         with self._lock:
             return self._next_available()
@@ -711,12 +729,19 @@ def run_crypto_search(keyword=None, output_dir='./crypto_output',
             (f'"{keyword}" filename:.env',          'HIGH'),
         ] + code_dorks
 
+    def _check_rate_limit():
+        """Warn in Live Log if all tokens are currently rate-limited."""
+        wait = rotator.soonest_available()
+        if wait > 1:
+            log(f'⏳ All tokens rate-limited — waiting ~{int(wait)}s for reset…', 'warning')
+
     log(f"[PHASE 1] Code search — {len(code_dorks)} queries targeting file contents")
     for i, (dork, tier) in enumerate(code_dorks, 1):
         if _should_stop():
             log('⏹ Scan stopped by user.', 'warning')
             break
 
+        _check_rate_limit()
         log(f'  [{i}/{len(code_dorks)}] [{tier}] {dork[:70]}')
         items = query_code(dork)
         if not items:
@@ -756,6 +781,7 @@ def run_crypto_search(keyword=None, output_dir='./crypto_output',
             log('⏹ Scan stopped by user.', 'warning')
             break
 
+        _check_rate_limit()
         log(f'  [{i}/{len(dorks)}] [{tier}] "{dork[:60]}"')
 
         data = query_commits(dork)

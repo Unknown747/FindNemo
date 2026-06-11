@@ -98,7 +98,7 @@ def start_search():
     rate_limit = float(data.get('rate_limit', 5.0))
     min_score  = int(data.get('min_score', 65))
 
-    while not _job['queue'].empty():
+    while True:
         try: _job['queue'].get_nowait()
         except queue.Empty: break
 
