@@ -169,6 +169,15 @@ class SecretsDB:
         with self._lock:
             return fp in self._data['entries']
 
+    def is_all_known(self, finding: dict) -> bool:
+        """Return True if every extractable secret in this finding is already in vault."""
+        secrets = [_extract_secret_value(m) for m in finding.get('crypto_matches', [])]
+        secrets = [s for s in secrets if s]
+        if not secrets:
+            return False
+        with self._lock:
+            return all(_fingerprint(s) in self._data['entries'] for s in secrets)
+
     def add_finding(self, finding: dict) -> tuple[int, int]:
         """
         Process one finding dict (as returned by extract_findings).
@@ -178,6 +187,8 @@ class SecretsDB:
           dup_count  — secrets that were already known (skipped)
         """
         new_count = dup_count = 0
+        repo       = finding.get('repo', '')
+        commit_url = finding.get('commit_url', '')
 
         with self._lock:
             for m in finding.get('crypto_matches', []):
@@ -188,7 +199,13 @@ class SecretsDB:
                 fp = _fingerprint(secret_val)
 
                 if fp in self._data['entries']:
-                    self._data['entries'][fp]['scan_count'] += 1
+                    entry = self._data['entries'][fp]
+                    entry['scan_count'] += 1
+                    # Accumulate source repos (max 20, no duplicates)
+                    repos = entry.setdefault('repos', [])
+                    existing_urls = {r.get('commit_url') for r in repos}
+                    if commit_url and commit_url not in existing_urls and len(repos) < 20:
+                        repos.append({'repo': repo, 'commit_url': commit_url})
                     dup_count += 1
                     continue
 
@@ -199,20 +216,21 @@ class SecretsDB:
                     'secret':      secret_val,
                     'risk_label':  finding.get('risk_label', 'MEDIUM'),
                     'confidence':  finding.get('confidence', 0),
-                    'repo':        finding.get('repo', ''),
-                    'commit_url':  finding.get('commit_url', ''),
+                    'repo':        repo,
+                    'commit_url':  commit_url,
                     'commit_sha':  finding.get('commit_sha', ''),
                     'author':      finding.get('author', ''),
                     'date':        finding.get('date', ''),
                     'first_seen':  _now_iso(),
                     'scan_count':  1,
                     'message':     finding.get('message', '')[:300],
+                    'repos':       [{'repo': repo, 'commit_url': commit_url}] if repo else [],
                 }
                 self._data['entries'][fp] = entry
                 self._data['total'] = len(self._data['entries'])
                 new_count += 1
 
-            if new_count:
+            if new_count or dup_count:
                 self._save()
 
         return new_count, dup_count

@@ -548,6 +548,21 @@
       const spc = `score-${cls}`;
       const shortId = (e.fingerprint||'').slice(0,12);
       const scanBadge = e.scan_count > 1 ? `<span class="scan-badge">seen ${e.scan_count}×</span>` : '';
+      const repos = e.repos || [];
+      const reposHtml = repos.length > 1
+        ? `<div style="margin-top:6px">
+             <span style="font-size:10px;color:var(--muted);font-weight:600">
+               DITEMUKAN DI ${repos.length} REPO:
+             </span>
+             <div style="margin-top:3px;display:flex;flex-direction:column;gap:2px">
+               ${repos.map(r => `
+                 <a href="${esc(r.commit_url)}" target="_blank"
+                    style="font-size:11px;color:var(--blue);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                   ${esc(r.repo)}
+                 </a>`).join('')}
+             </div>
+           </div>`
+        : '';
       return `<div class="vault-entry ${cls}">
         <div class="vault-header">
           <span class="vault-type">${esc(e.type)}</span>
@@ -561,6 +576,7 @@
           · first seen: ${esc((e.first_seen||'').slice(0,10))}
           · <code style="color:var(--muted)">${esc(shortId)}</code>
         </div>
+        ${reposHtml}
       </div>`;
     }).join('');
   }

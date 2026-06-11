@@ -632,21 +632,25 @@ def extract_code_findings(code_items, dork_tier='CRITICAL', min_score=65):
 # ---------------------------------------------------------------------------
 
 def _save_to_vault(finding, total_new_db, total_dup_db, log, progress_callback):
-    """Helper: persist one finding to the dedup vault and emit events."""
+    """
+    Persist one finding to the dedup vault and emit events.
+    Returns (total_new_db, total_dup_db, is_new) where is_new=True means
+    at least one secret was new to the vault — caller should show this finding.
+    """
     n, d = secrets_db.add_finding(finding)
     total_new_db += n
     total_dup_db += d
     if n:
         log(f'    💾 Saved {n} new secret(s) to vault')
-    if d:
-        log(f'    ⏭  Skipped {d} duplicate(s) already in vault')
+    if d and not n:
+        log(f'    ⏭  Skipped — all {d} secret(s) already in vault')
     if progress_callback and (n or d):
         progress_callback({
-            'level':      'vault',
-            'message':    f'Vault: {secrets_db.stats()["total"]} unique secrets',
+            'level':       'vault',
+            'message':     f'Vault: {secrets_db.stats()["total"]} unique secrets',
             'vault_total': secrets_db.stats()['total'],
         })
-    return total_new_db, total_dup_db
+    return total_new_db, total_dup_db, n > 0
 
 
 def run_crypto_search(keyword=None, output_dir='./crypto_output',
@@ -699,10 +703,10 @@ def run_crypto_search(keyword=None, output_dir='./crypto_output',
         new = [f for f in findings if f['commit_url'] not in seen_keys]
         for f in new:
             seen_keys.add(f['commit_url'])
-            total_new_db, total_dup_db = _save_to_vault(
+            total_new_db, total_dup_db, is_new = _save_to_vault(
                 f, total_new_db, total_dup_db, log, progress_callback)
-
-        all_findings.extend(new)
+            if is_new:
+                all_findings.append(f)
         log(f'    → {len(items)} files | {len(new)} passed filter | '
             f'total: {len(all_findings)}')
 
@@ -735,10 +739,10 @@ def run_crypto_search(keyword=None, output_dir='./crypto_output',
         new = [f for f in findings if f['commit_sha'] not in seen_keys]
         for f in new:
             seen_keys.add(f['commit_sha'])
-            total_new_db, total_dup_db = _save_to_vault(
+            total_new_db, total_dup_db, is_new = _save_to_vault(
                 f, total_new_db, total_dup_db, log, progress_callback)
-
-        all_findings.extend(new)
+            if is_new:
+                all_findings.append(f)
         passed_pct = f'{(len(new)/max(total,1)*100):.0f}%' if total else '0%'
         log(f'    → {total} commits | {len(new)} passed ({passed_pct}) | '
             f'total: {len(all_findings)}')
