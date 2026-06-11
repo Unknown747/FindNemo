@@ -270,6 +270,9 @@
     const minScore  = parseInt(document.getElementById('min-score').value);
     const btn = document.getElementById('btn-start');
     btn.disabled = true;
+    _searchDone = false;
+    _reconnectDelay = 1500;
+    clearTimeout(_reconnectTimer);
     clearLog();
     appendLog('info', `Starting scan… (min confidence: ${minScore})`);
     setStatus('running');
@@ -287,23 +290,68 @@
       return;
     }
 
-    if (evtSource) evtSource.close();
+    connectStream();
+  }
+
+  // ── SSE with auto-reconnect ───────────────────────────────────────────────
+  let _reconnectTimer = null;
+  let _reconnectDelay = 1500;   // ms, doubles on each retry up to 15s
+  let _searchDone     = false;
+
+  function connectStream() {
+    if (evtSource) { evtSource.close(); evtSource = null; }
     evtSource = new EventSource('/api/stream');
+
+    evtSource.onopen = () => {
+      _reconnectDelay = 1500;   // reset backoff on successful connect
+    };
+
     evtSource.onmessage = e => {
       const d = JSON.parse(e.data);
+
+      // Ignore heartbeat pings — don't log them
+      if (d.level === 'ping') return;
+
       appendLog(d.level, d.message);
+
       if (d.level === 'done') {
+        _searchDone = true;
         evtSource.close(); evtSource = null;
-        setStatus('done'); stopProgress(); btn.disabled = false;
+        clearTimeout(_reconnectTimer);
+        setStatus('done'); stopProgress();
+        document.getElementById('btn-start').disabled = false;
         fetchFindings(); fetchStatus();
         document.getElementById('dl-row').style.display = 'flex';
         showQuality(d.quality_pct ?? 0, d.high_quality_count ?? 0);
       }
     };
-    evtSource.onerror = () => {
-      appendLog('error', 'Stream disconnected.');
-      evtSource.close(); evtSource = null;
-      setStatus('idle'); stopProgress(); btn.disabled = false;
+
+    evtSource.onerror = async () => {
+      if (evtSource) { evtSource.close(); evtSource = null; }
+
+      if (_searchDone) return;   // search already finished — no need to reconnect
+
+      // Check if the job is still running before reconnecting
+      try {
+        const st = await (await fetch('/api/status')).json();
+        if (!st.running) {
+          // Search finished while we were disconnected — load results
+          _searchDone = true;
+          setStatus('done'); stopProgress();
+          document.getElementById('btn-start').disabled = false;
+          fetchFindings(); fetchStatus();
+          document.getElementById('dl-row').style.display = 'flex';
+          return;
+        }
+      } catch (_) { /* network blip — will retry */ }
+
+      // Still running → reconnect with backoff
+      appendLog('warning', `Stream reconnecting in ${(_reconnectDelay/1000).toFixed(1)}s…`);
+      _reconnectTimer = setTimeout(() => {
+        appendLog('info', 'Reconnected to stream.');
+        connectStream();
+      }, _reconnectDelay);
+      _reconnectDelay = Math.min(_reconnectDelay * 2, 15000);
     };
   }
 

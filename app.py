@@ -82,18 +82,31 @@ def start_search():
 
 @app.route('/api/stream')
 def stream():
+    # Accept a cursor so reconnecting clients replay missed messages
+    since = request.args.get('since', 0, type=int)
+
     def gen():
-        yield f"data: {json.dumps({'level':'info','message':'Connected — waiting for search…'})}\n\n"
+        yield f"data: {json.dumps({'level':'ping','message':'connected'})}\n\n"
         while True:
             try:
-                ev = _job['queue'].get(timeout=25)
+                # Short timeout so heartbeat fires well within proxy limits (~30 s)
+                ev = _job['queue'].get(timeout=8)
                 yield f"data: {json.dumps(ev)}\n\n"
                 if ev.get('level') == 'done':
                     break
             except queue.Empty:
-                yield ": heartbeat\n\n"
+                # Send a real data event, not just an SSE comment —
+                # proxy keep-alive needs actual bytes on the wire
+                hb = {'level': 'ping', 'message': 'heartbeat',
+                      'running': _job['running'], 'ts': int(time.time())}
+                yield f"data: {json.dumps(hb)}\n\n"
+
     return Response(gen(), mimetype='text/event-stream',
-                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+                    headers={
+                        'Cache-Control': 'no-cache, no-transform',
+                        'X-Accel-Buffering': 'no',
+                        'Connection': 'keep-alive',
+                    })
 
 
 @app.route('/api/status')
