@@ -291,7 +291,7 @@ class SecretsDB:
         """Return all entries sorted by confidence desc, then first_seen desc."""
         with self._lock:
             entries = list(self._data['entries'].values())
-        entries.sort(key=lambda e: (-e.get('confidence', 0), e.get('first_seen', '')), reverse=False)
+        entries.sort(key=lambda e: (-e.get('confidence', 0), e.get('first_seen', '')), reverse=True)
         return entries
 
     def stats(self) -> dict:

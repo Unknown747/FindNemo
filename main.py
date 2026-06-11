@@ -645,10 +645,11 @@ def _save_to_vault(finding, total_new_db, total_dup_db, log, progress_callback):
     if d and not n:
         log(f'    ⏭  Skipped — all {d} secret(s) already in vault')
     if progress_callback and (n or d):
+        _stats = secrets_db.stats()
         progress_callback({
             'level':       'vault',
-            'message':     f'Vault: {secrets_db.stats()["total"]} unique secrets',
-            'vault_total': secrets_db.stats()['total'],
+            'message':     f'Vault: {_stats["total"]} unique secrets',
+            'vault_total': _stats['total'],
         })
     return total_new_db, total_dup_db, n > 0
 
@@ -715,7 +716,8 @@ def run_crypto_search(keyword=None, output_dir='./crypto_output',
                 f'— {f.get("file_path","?")} '
                 f'— {", ".join(m["type"] for m in f["crypto_matches"][:2])}')
 
-        time.sleep(rate_limit)
+        # GitHub Code Search API: max 10 req/min with auth = min 6s between requests
+        time.sleep(max(rate_limit, 6.0))
 
     # ── PHASE 2: Commit message search ──────────────────────────────────────
     dorks = get_ordered_dorks(keyword, include_low=include_low_dorks)

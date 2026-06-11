@@ -129,6 +129,14 @@
     .btn-helio { background:#1a1f2e; color:#f0c040; border:1px solid #f0c040; border-radius:5px; padding:3px 9px; font-size:11px; font-weight:700; cursor:pointer; white-space:nowrap; transition:background .15s; }
     .btn-helio:hover { background:#f0c040; color:#0d1117; }
     .helio-toast { position:fixed; bottom:24px; right:24px; background:#f0c040; color:#0d1117; font-weight:700; font-size:13px; padding:9px 18px; border-radius:8px; z-index:9999; opacity:0; pointer-events:none; transition:opacity .25s; }
+    .helio-modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:10000; align-items:center; justify-content:center; }
+    .helio-modal-overlay.active { display:flex; }
+    .helio-modal { background:var(--surface); border:1px solid #f0c040; border-radius:10px; padding:22px 24px; max-width:520px; width:90%; }
+    .helio-modal h3 { color:#f0c040; margin-bottom:10px; font-size:14px; }
+    .helio-modal textarea { width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:5px; padding:8px; font-family:monospace; font-size:12px; resize:vertical; min-height:80px; }
+    .helio-modal .modal-actions { display:flex; gap:8px; margin-top:12px; justify-content:flex-end; }
+    .helio-modal .btn-copy-manual { background:#f0c040; color:#0d1117; border:none; border-radius:5px; padding:7px 16px; font-weight:700; cursor:pointer; font-size:13px; }
+    .helio-modal .btn-close-modal { background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:5px; padding:7px 14px; cursor:pointer; font-size:13px; }
 
     /* Vault toolbar */
     .vault-toolbar { display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
@@ -679,15 +687,74 @@
     setTimeout(() => { t.style.opacity = '0'; }, 2800);
   }
 
+  /**
+   * Robust clipboard copy — works inside iframes where navigator.clipboard
+   * is often blocked. Tries three methods in order:
+   *  1. navigator.clipboard.writeText (modern, may be blocked in iframe)
+   *  2. document.execCommand('copy') via hidden textarea (legacy, wider support)
+   *  3. Returns false so caller can show a manual-copy modal
+   */
+  function _copyToClipboard(text) {
+    // Method 1: modern async clipboard
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).then(() => true).catch(() => {
+        // Method 2: legacy execCommand fallback
+        return _execCommandCopy(text);
+      });
+    }
+    // Method 2 directly if clipboard API unavailable
+    return Promise.resolve(_execCommandCopy(text));
+  }
+
+  function _execCommandCopy(text) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function _showHelioModal(secret, title) {
+    const overlay = document.getElementById('helio-modal-overlay');
+    const ta = document.getElementById('helio-modal-textarea');
+    const ttl = document.getElementById('helio-modal-title');
+    ttl.textContent = title || '🔑 Copy secret ini, lalu paste di Helio Wallet';
+    ta.value = secret;
+    overlay.classList.add('active');
+    setTimeout(() => { ta.focus(); ta.select(); }, 80);
+  }
+
+  function closeHelioModal() {
+    document.getElementById('helio-modal-overlay').classList.remove('active');
+  }
+
+  function copyFromModal() {
+    const ta = document.getElementById('helio-modal-textarea');
+    ta.select();
+    _copyToClipboard(ta.value).then(ok => {
+      _showHelioToast(ok ? '✅ Di-copy! Sekarang paste di Helio Wallet.' : '⚠ Pilih teks lalu Ctrl+C / Cmd+C.');
+    });
+  }
+
   function openInHelio(secret, type) {
     if (!secret) return;
-    navigator.clipboard.writeText(secret).then(() => {
-      window.open(HELIO_URL, '_blank');
-      _showHelioToast('🔑 Secret di-copy! Paste di Helio Wallet yang terbuka.');
-    }).catch(() => {
-      // Clipboard denied — still open the tab, user can copy manually
-      window.open(HELIO_URL, '_blank');
-      _showHelioToast('⚠ Tidak bisa copy otomatis — copy manual dari vault lalu paste di Helio.');
+    const helioWin = window.open(HELIO_URL, '_blank');
+    _copyToClipboard(secret).then(ok => {
+      if (ok) {
+        _showHelioToast('🔑 Secret di-copy! Paste di tab Helio Wallet.');
+      } else {
+        // Clipboard blocked — show modal so user can copy manually
+        if (helioWin) helioWin.focus();
+        _showHelioModal(secret, `🔑 Copy secret ini (${type}), lalu paste di Helio Wallet`);
+      }
     });
   }
 
@@ -701,15 +768,20 @@
     const list = targets.slice(0, MAX);
     if (!confirm(`Akan membuka ${list.length} tab Helio Wallet sekaligus (dari ${targets.length} entri).\n\nLanjutkan?`)) return;
 
-    // Copy all secrets to clipboard as newline-separated list for reference
     const allSecrets = list.map((e, i) => `[${i+1}] ${e.type}: ${e.secret}`).join('\n');
-    navigator.clipboard.writeText(allSecrets).catch(() => {});
 
     // Open tabs with small delay so browser doesn't block popup
     list.forEach((e, i) => {
       setTimeout(() => window.open(HELIO_URL, '_blank'), i * 400);
     });
-    _showHelioToast(`🔑 Membuka ${list.length} tab Helio… Paste secret ke masing-masing tab.`);
+
+    _copyToClipboard(allSecrets).then(ok => {
+      if (ok) {
+        _showHelioToast(`🔑 Membuka ${list.length} tab Helio… Paste secret ke masing-masing tab.`);
+      } else {
+        _showHelioModal(allSecrets, `🔑 ${list.length} secret — copy manual, lalu paste ke masing-masing tab Helio`);
+      }
+    });
   }
 
   async function clearVault() {
@@ -832,5 +904,16 @@
   setInterval(fetchStatus, 6000);
 </script>
 <div id="helio-toast" class="helio-toast"></div>
+
+<div id="helio-modal-overlay" class="helio-modal-overlay" onclick="if(event.target===this)closeHelioModal()">
+  <div class="helio-modal">
+    <h3 id="helio-modal-title">🔑 Copy secret ini, lalu paste di Helio Wallet</h3>
+    <textarea id="helio-modal-textarea" readonly></textarea>
+    <div class="modal-actions">
+      <button class="btn-close-modal" onclick="closeHelioModal()">Tutup</button>
+      <button class="btn-copy-manual" onclick="copyFromModal()">📋 Copy Secret</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
