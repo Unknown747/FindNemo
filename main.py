@@ -42,10 +42,40 @@ def shannon_entropy(s):
 # Token Rotation
 # ---------------------------------------------------------------------------
 
+_TOKENS_FILE = os.path.join('crypto_output', 'tokens.json')
+
+
+def _load_saved_tokens() -> list:
+    """Load tokens previously saved via the web UI."""
+    try:
+        if os.path.exists(_TOKENS_FILE):
+            with open(_TOKENS_FILE, encoding='utf-8') as f:
+                data = json.load(f)
+            return [t for t in data.get('tokens', []) if t]
+    except Exception:
+        pass
+    return []
+
+
+def _save_tokens(tokens: list):
+    """Persist web-added tokens to disk."""
+    os.makedirs(os.path.dirname(_TOKENS_FILE), exist_ok=True)
+    tmp = _TOKENS_FILE + '.tmp'
+    try:
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump({'tokens': tokens}, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, _TOKENS_FILE)
+    except Exception as e:
+        logger.warning(f'TokenRotator: could not save tokens: {e}')
+
+
 class TokenRotator:
     """
     Rotate through multiple GitHub tokens.
     Reads from: GITHUB_TOKEN, GITHUB_TOKEN_1..N, GITHUB_TOKENS (comma-sep).
+    Tokens added via the web UI are also persisted to crypto_output/tokens.json.
     """
     def __init__(self):
         self._tokens = []
@@ -67,17 +97,37 @@ class TokenRotator:
                 seen.add(t); tokens.append(t)
         t = os.environ.get('GITHUB_TOKEN', '').strip()
         if t and t not in seen:
-            tokens.append(t)
+            seen.add(t); tokens.append(t)
+        for t in _load_saved_tokens():
+            if t not in seen:
+                seen.add(t); tokens.append(t)
         self._tokens = tokens
         self._invalid = set()
         self._index = 0
+
+    def _persist(self):
+        """Save current token list to disk (must be called with lock held)."""
+        env_tokens = set()
+        for raw in os.environ.get('GITHUB_TOKENS', '').split(','):
+            raw = raw.strip()
+            if raw:
+                env_tokens.add(raw)
+        for i in range(1, 20):
+            raw = os.environ.get(f'GITHUB_TOKEN_{i}', '').strip()
+            if raw:
+                env_tokens.add(raw)
+        raw = os.environ.get('GITHUB_TOKEN', '').strip()
+        if raw:
+            env_tokens.add(raw)
+        web_tokens = [t for t in self._tokens if t not in env_tokens]
+        _save_tokens(web_tokens)
 
     def reload(self):
         with self._lock:
             self._load()
 
     def add_token(self, token: str) -> bool:
-        """Add a token at runtime. Returns True if it was new, False if duplicate."""
+        """Add a token at runtime and persist it. Returns True if it was new."""
         token = token.strip()
         if not token:
             return False
@@ -86,6 +136,7 @@ class TokenRotator:
             if token in existing:
                 return False
             self._tokens.append(token)
+            self._persist()
             return True
 
     def remove_token(self, token_suffix: str) -> bool:
@@ -100,6 +151,7 @@ class TokenRotator:
                     self._reset_at.pop(t, None)
                     if self._index >= len(self._tokens) and self._tokens:
                         self._index = 0
+                    self._persist()
                     return True
         return False
 
