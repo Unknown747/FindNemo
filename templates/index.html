@@ -292,7 +292,6 @@
               <span class="risk-pill medium"       onclick="setRiskFilter('MEDIUM',this)">MEDIUM</span>
             </div>
             <button class="btn btn-subtle btn-sm" onclick="loadVault()">↺</button>
-            <button class="btn-helio" onclick="openAllInHelio()" title="Buka semua private key & mnemonic di Helio Wallet">🔑 Buka Semua di Helio</button>
             <button class="btn btn-danger  btn-sm" onclick="clearVault()">🗑 Clear Vault</button>
           </div>
 
@@ -540,18 +539,19 @@
         : esc((f.message||'').slice(0,280));
       const fHelioMatches = (f.crypto_matches||[]).filter(m => _HELIO_TYPES.has(m.type));
       const fHelioBtn = fHelioMatches.length
-        ? `<button class="btn-helio" style="padding:2px 7px;font-size:10px;margin-left:6px"
+        ? `<button class="btn-helio" style="padding:4px 12px;font-size:11px;margin-top:6px;display:inline-flex;align-items:center;gap:5px"
              onclick="openInHelio(${JSON.stringify(fHelioMatches[0].match||'')},${JSON.stringify(fHelioMatches[0].type)})"
-             title="Copy & buka di Helio Wallet">🔑 Helio</button>`
+             title="Copy secret & buka Helio Wallet">🔑 Buka di Helio Wallet</button>`
         : '';
       return `<div class="finding ${cls}">
         <div class="finding-header">
           <div class="f-repo">${sourceBadge} <a href="${esc(f.commit_url)}" target="_blank" style="color:inherit;text-decoration:none">${esc(f.repo)}</a>${fileBadge}</div>
-          <span class="score-pill ${spc}">${esc(rl)} · ${f.confidence}/100</span>${fHelioBtn}
+          <span class="score-pill ${spc}">${esc(rl)} · ${f.confidence}/100</span>
         </div>
         <div class="f-meta">${isCode ? '' : `${esc(f.author)} · ${esc(f.date)} · <code>${esc((f.commit_sha||'').slice(0,8))}</code>`}</div>
         <div class="f-msg">${msgDisplay}</div>
         <div class="f-tags">${tags}</div>
+        ${fHelioBtn}
       </div>`;
     }).join('');
   }
@@ -648,17 +648,17 @@
         : '';
       const isWalletType = _HELIO_TYPES.has(e.type);
       const helioBtn = isWalletType
-        ? `<button class="btn-helio" style="padding:2px 7px;font-size:10px" onclick="openInHelio(${JSON.stringify(e.secret||'')},${JSON.stringify(e.type)})" title="Copy & buka di Helio Wallet">🔑 Helio</button>`
+        ? `<button class="btn-helio" style="padding:4px 12px;font-size:11px;margin-top:6px;display:inline-flex;align-items:center;gap:5px" onclick="openInHelio(${JSON.stringify(e.secret||'')},${JSON.stringify(e.type)})" title="Copy secret & buka Helio Wallet">🔑 Buka di Helio Wallet</button>`
         : '';
       return `<div class="vault-entry ${cls}">
         <div class="vault-header">
           <span class="vault-type">${esc(e.type)}</span>
           <span class="score-pill ${spc}">${esc(rl)} · ${e.confidence}/100</span>
           ${scanBadge}
-          ${helioBtn}
         </div>
         <div class="vault-secret" onclick="copySecret('${esc(e.secret||'')}',this)" title="Click to copy">${esc((e.secret||'').slice(0,120))}${(e.secret||'').length>120?'…':''}</div>
-        <div class="vault-meta">
+        ${helioBtn}
+        <div class="vault-meta" style="margin-top:6px">
           <a href="${esc(e.commit_url)}" target="_blank">${esc(e.repo)}</a>
           · ${esc(e.author||'')} · ${esc((e.date||'').slice(0,10))}
           · first seen: ${esc((e.first_seen||'').slice(0,10))}
@@ -670,10 +670,11 @@
   }
 
   function copySecret(val, el) {
-    navigator.clipboard.writeText(val).then(() => {
+    _copyToClipboard(val).then(ok => {
       const orig = el.style.outline;
-      el.style.outline = '1px solid var(--green)';
+      el.style.outline = ok ? '1px solid var(--green)' : '1px solid var(--yellow)';
       setTimeout(() => { el.style.outline = orig; }, 800);
+      if (!ok) _showHelioToast('⚠ Copy gagal — coba Ctrl+C manual');
     });
   }
 
@@ -758,31 +759,6 @@
     });
   }
 
-  function openAllInHelio() {
-    const targets = _vaultEntries.filter(e => _HELIO_TYPES.has(e.type));
-    if (!targets.length) {
-      alert('Tidak ada private key / mnemonic di vault saat ini.');
-      return;
-    }
-    const MAX = 20;
-    const list = targets.slice(0, MAX);
-    if (!confirm(`Akan membuka ${list.length} tab Helio Wallet sekaligus (dari ${targets.length} entri).\n\nLanjutkan?`)) return;
-
-    const allSecrets = list.map((e, i) => `[${i+1}] ${e.type}: ${e.secret}`).join('\n');
-
-    // Open tabs with small delay so browser doesn't block popup
-    list.forEach((e, i) => {
-      setTimeout(() => window.open(HELIO_URL, '_blank'), i * 400);
-    });
-
-    _copyToClipboard(allSecrets).then(ok => {
-      if (ok) {
-        _showHelioToast(`🔑 Membuka ${list.length} tab Helio… Paste secret ke masing-masing tab.`);
-      } else {
-        _showHelioModal(allSecrets, `🔑 ${list.length} secret — copy manual, lalu paste ke masing-masing tab Helio`);
-      }
-    });
-  }
 
   async function clearVault() {
     if (!confirm('Clear ALL saved secrets from the vault? This cannot be undone.')) return;
