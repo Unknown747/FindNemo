@@ -209,9 +209,18 @@ class SecretsDB:
         """Must be called with self._lock held."""
         self._data['last_updated'] = _now_iso()
         tmp = self._path + '.tmp'
-        with open(tmp, 'w', encoding='utf-8') as f:
-            json.dump(self._data, f, indent=2, ensure_ascii=False)
-        os.replace(tmp, self._path)
+        try:
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(self._data, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self._path)
+        except Exception as e:
+            logger.error(f'secrets_db: _save failed, database NOT overwritten: {e}')
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -291,7 +300,7 @@ class SecretsDB:
         """Return all entries sorted by confidence desc, then first_seen desc."""
         with self._lock:
             entries = list(self._data['entries'].values())
-        entries.sort(key=lambda e: (-e.get('confidence', 0), e.get('first_seen', '')), reverse=True)
+        entries.sort(key=lambda e: (e.get('confidence', 0), e.get('first_seen', '')), reverse=True)
         return entries
 
     def stats(self) -> dict:

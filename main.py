@@ -19,9 +19,11 @@ def _load_bip39():
 BIP39_WORDS = _load_bip39()
 
 def is_valid_bip39(phrase):
-    """Return True if ALL words in the phrase are BIP-39 words."""
+    """Return True if ALL words in the phrase are BIP-39 words.
+    Returns None (not False) when the wordlist failed to load, so callers
+    can skip scoring adjustments rather than penalising real mnemonics."""
     if not BIP39_WORDS:
-        return False
+        return None
     words = phrase.lower().split()
     return len(words) >= 12 and all(w in BIP39_WORDS for w in words)
 
@@ -311,10 +313,12 @@ def score_finding(message, crypto_matches, dork_tier='MEDIUM'):
             score += 35
             # BIP-39 validation for any mnemonic type
             if 'mnemonic' in t and m.get('match'):
-                if is_valid_bip39(m['match']):
+                bip_result = is_valid_bip39(m['match'])
+                if bip_result is True:
                     score += 20  # valid BIP-39 wordlist — confirmed real mnemonic
-                else:
+                elif bip_result is False:
                     score -= 15  # penalise random-word sequences
+                # bip_result is None → wordlist unavailable, skip adjustment
             # Entropy check for hex keys
             if 'key' in t or 'hex' in t:
                 raw = re.sub(r'0x', '', m.get('match', ''), flags=re.I)

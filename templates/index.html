@@ -338,11 +338,13 @@
   }
 
   // ── Log ───────────────────────────────────────────────────────────────────
+  const _SAFE_LEVELS = new Set(['info','warning','error','done','vault','ping']);
   function appendLog(level, msg) {
     const log = document.getElementById('log');
     const d = document.createElement('div');
     const ts = new Date().toLocaleTimeString();
-    d.innerHTML = `<span class="log-ts">[${ts}]</span><span class="log-${level}">${esc(msg)}</span>`;
+    const safeLevel = _SAFE_LEVELS.has(level) ? level : 'info';
+    d.innerHTML = `<span class="log-ts">[${ts}]</span><span class="log-${safeLevel}">${esc(msg)}</span>`;
     log.appendChild(d);
     log.scrollTop = log.scrollHeight;
   }
@@ -376,6 +378,7 @@
       body: JSON.stringify({keyword, rate_limit: rateLimit, min_score: minScore})
     });
     if (!res.ok) {
+      clearTimeout(_reconnectTimer);
       const e = await res.json();
       appendLog('error', e.error || 'Failed to start.');
       setStatus('idle'); stopProgress(); _setSearchButtons(false);

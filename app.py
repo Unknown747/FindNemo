@@ -1,5 +1,5 @@
 import json, os, queue, threading, time
-from flask import Flask, Response, jsonify, render_template, request, send_from_directory
+from flask import Flask, Response, jsonify, render_template, request, send_from_directory, abort
 from main import run_crypto_search, rotator
 from secrets_db import db as secrets_db
 
@@ -59,11 +59,14 @@ def _run_job(keyword, rate_limit, min_score):
         _job['findings'] = findings
     except Exception as e:
         _job['error'] = str(e)
-        _job['queue'].put({'level': 'error', 'message': f'Fatal: {e}'})
-        _job['queue'].put({'level': 'done', 'message': 'Stopped',
-                           'findings_count': 0, 'urls_count': 0,
-                           'high_quality_count': 0, 'quality_pct': 0,
-                           'new_secrets': 0, 'dup_secrets': 0})
+        try:
+            _job['queue'].put({'level': 'error', 'message': f'Fatal: {e}'})
+            _job['queue'].put({'level': 'done', 'message': 'Stopped',
+                               'findings_count': 0, 'urls_count': 0,
+                               'high_quality_count': 0, 'quality_pct': 0,
+                               'new_secrets': 0, 'dup_secrets': 0})
+        except Exception:
+            pass
     finally:
         _job['running']        = False
         _job['stop_requested'] = False
@@ -203,9 +206,19 @@ def remove_token():
 
 # ── Downloads ────────────────────────────────────────────────────────────────
 
+_ALLOWED_DOWNLOADS = {
+    'crypto_commit_findings.json',
+    'crypto_report.txt',
+    'crypto_commit_urls.txt',
+    'secrets_db.json',
+}
+
 @app.route('/download/<path:filename>')
 def download(filename):
-    return send_from_directory('crypto_output', filename, as_attachment=True)
+    safe = os.path.basename(filename)
+    if safe not in _ALLOWED_DOWNLOADS:
+        abort(404)
+    return send_from_directory('crypto_output', safe, as_attachment=True)
 
 
 @app.route('/download/vault')
