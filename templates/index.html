@@ -595,18 +595,29 @@
     }
     list.innerHTML = tokens.map(t => {
       const suffix = t.token.replace('...','');
-      const removeBtn = t.available
-        ? `<button class="btn btn-danger btn-sm" style="padding:2px 7px;font-size:10px;line-height:1"
-             onclick="removeToken('${suffix}',this)" title="Remove token">✕</button>`
-        : `<span style="font-size:10px;color:var(--yellow);opacity:.6" title="Cannot remove while rate-limited">🔒</span>`;
+      let statusColor, statusText, actionEl;
+      if (t.invalid) {
+        statusColor = 'var(--red)';
+        statusText  = 'Invalid';
+        actionEl    = `<button class="btn btn-danger btn-sm" style="padding:2px 7px;font-size:10px;line-height:1"
+                         onclick="removeToken('${suffix}',this)" title="Hapus token tidak valid">✕ Hapus</button>`;
+      } else if (!t.available) {
+        statusColor = 'var(--yellow)';
+        statusText  = 'Rate-limited';
+        actionEl    = '';
+      } else {
+        statusColor = 'var(--green)';
+        statusText  = 'Ready';
+        actionEl    = '';
+      }
+      const dotCls = t.invalid ? 'dot-wait' : (t.available ? 'dot-ok' : 'dot-wait');
+      const dotColor = t.invalid ? 'background:var(--red)' : '';
       return `
       <div class="token-item">
-        <div class="dot ${t.available?'dot-ok':'dot-wait'}"></div>
+        <div class="dot ${dotCls}" style="${dotColor}"></div>
         <span class="lbl">${esc(t.token)}</span>
-        <span style="font-size:11px;color:${t.available?'var(--green)':'var(--yellow)'}">
-          ${t.available?'Ready':'Rate-limited'}
-        </span>
-        ${removeBtn}
+        <span style="font-size:11px;color:${statusColor}">${statusText}</span>
+        ${actionEl}
       </div>`;
     }).join('');
   }

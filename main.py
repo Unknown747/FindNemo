@@ -48,6 +48,7 @@ class TokenRotator:
     def __init__(self):
         self._tokens = []
         self._reset_at = {}
+        self._invalid = set()
         self._lock = threading.Lock()
         self._index = 0
         self._load()
@@ -66,6 +67,7 @@ class TokenRotator:
         if t and t not in seen:
             tokens.append(t)
         self._tokens = tokens
+        self._invalid = set()
         self._index = 0
 
     def reload(self):
@@ -85,14 +87,14 @@ class TokenRotator:
             return True
 
     def remove_token(self, token_suffix: str) -> bool:
-        """Remove a token by its last-6-char suffix. Only removes if NOT rate-limited."""
-        now = time.time()
+        """Remove a token by its last-6-char suffix. Only removes if marked INVALID."""
         with self._lock:
             for t in self._tokens:
                 if t.endswith(token_suffix):
-                    if now < self._reset_at.get(t, 0):
-                        return False  # rate-limited — refuse removal
+                    if t not in self._invalid:
+                        return False  # aktif atau rate-limited — tolak penghapusan
                     self._tokens.remove(t)
+                    self._invalid.discard(t)
                     self._reset_at.pop(t, None)
                     if self._index >= len(self._tokens) and self._tokens:
                         self._index = 0
@@ -111,6 +113,8 @@ class TokenRotator:
         for offset in range(len(self._tokens)):
             idx = (self._index + offset) % len(self._tokens)
             t = self._tokens[idx]
+            if t in self._invalid:
+                continue
             if now >= self._reset_at.get(t, 0):
                 self._index = idx
                 return t
@@ -121,6 +125,12 @@ class TokenRotator:
             self._reset_at[token] = reset_ts
             logger.warning(f'Token ...{token[-6:]} rate-limited until '
                            f'{time.strftime("%H:%M:%S", time.localtime(reset_ts))}')
+            self._index = (self._index + 1) % max(len(self._tokens), 1)
+
+    def mark_invalid(self, token):
+        with self._lock:
+            self._invalid.add(token)
+            logger.warning(f'Token ...{token[-6:]} marked invalid (401 Unauthorized)')
             self._index = (self._index + 1) % max(len(self._tokens), 1)
 
     def headers(self, token=None):
@@ -135,8 +145,9 @@ class TokenRotator:
     def status(self):
         now = time.time()
         return [{'token': f'...{t[-6:]}',
-                 'available': now >= self._reset_at.get(t, 0),
-                 'reset_at': self._reset_at.get(t, 0) if now < self._reset_at.get(t, 0) else None}
+                 'invalid':   t in self._invalid,
+                 'available': t not in self._invalid and now >= self._reset_at.get(t, 0),
+                 'reset_at':  self._reset_at.get(t, 0) if now < self._reset_at.get(t, 0) else None}
                 for t in self._tokens]
 
 
@@ -400,6 +411,13 @@ def _github_request(url, params, extra_accept=None, _depth=0):
         headers['Accept'] = extra_accept
     try:
         r = requests.get(url, headers=headers, timeout=20, params=params)
+        if r.status_code == 401:
+            if token:
+                rotator.mark_invalid(token)
+            next_tok = rotator.current()
+            if next_tok and next_tok != token:
+                return _github_request(url, params, extra_accept, _depth + 1)
+            return None
         if r.status_code in (403, 429):
             reset_ts = int(r.headers.get('X-RateLimit-Reset', time.time() + 61))
             if token:
