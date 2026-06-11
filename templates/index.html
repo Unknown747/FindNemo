@@ -134,9 +134,13 @@
     .helio-modal { background:var(--surface); border:1px solid #f0c040; border-radius:10px; padding:22px 24px; max-width:520px; width:90%; }
     .helio-modal h3 { color:#f0c040; margin-bottom:10px; font-size:14px; }
     .helio-modal textarea { width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:5px; padding:8px; font-family:monospace; font-size:12px; resize:vertical; min-height:80px; }
-    .helio-modal .modal-actions { display:flex; gap:8px; margin-top:12px; justify-content:flex-end; }
+    .helio-modal .modal-step { font-size:12px; color:var(--muted); margin-bottom:6px; }
+    .helio-modal .modal-step strong { color:var(--text); }
+    .helio-modal .modal-actions { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; align-items:center; }
     .helio-modal .btn-copy-manual { background:#f0c040; color:#0d1117; border:none; border-radius:5px; padding:7px 16px; font-weight:700; cursor:pointer; font-size:13px; }
-    .helio-modal .btn-close-modal { background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:5px; padding:7px 14px; cursor:pointer; font-size:13px; }
+    .helio-modal .btn-open-helio { background:#1a3a5c; color:var(--blue); border:1px solid var(--blue); border-radius:5px; padding:7px 16px; font-weight:700; font-size:13px; text-decoration:none; display:inline-flex; align-items:center; gap:5px; }
+    .helio-modal .btn-open-helio:hover { background:var(--blue); color:#0d1117; }
+    .helio-modal .btn-close-modal { background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:5px; padding:7px 14px; cursor:pointer; font-size:13px; margin-left:auto; }
 
     /* Vault toolbar */
     .vault-toolbar { display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
@@ -768,15 +772,13 @@
 
   function openInHelio(secret, type) {
     if (!secret) return;
-    const helioWin = window.open(HELIO_URL, '_blank');
+    // Always show the modal — contains the secret + a real <a> link the user clicks.
+    // window.open() is blocked by browsers when called from an iframe, but a user
+    // clicking an <a target="_blank"> inside the modal always works.
+    _showHelioModal(secret, `🔑 ${type}`);
+    // Also try clipboard immediately (best-effort)
     _copyToClipboard(secret).then(ok => {
-      if (ok) {
-        _showHelioToast('🔑 Secret di-copy! Paste di tab Helio Wallet.');
-      } else {
-        // Clipboard blocked — show modal so user can copy manually
-        if (helioWin) helioWin.focus();
-        _showHelioModal(secret, `🔑 Copy secret ini (${type}), lalu paste di Helio Wallet`);
-      }
+      if (ok) _showHelioToast('📋 Secret di-copy — paste di Helio Wallet!');
     });
   }
 
@@ -904,11 +906,14 @@
 
 <div id="helio-modal-overlay" class="helio-modal-overlay" onclick="if(event.target===this)closeHelioModal()">
   <div class="helio-modal">
-    <h3 id="helio-modal-title">🔑 Copy secret ini, lalu paste di Helio Wallet</h3>
+    <h3 id="helio-modal-title">🔑 Buka di Helio Wallet</h3>
+    <p class="modal-step"><strong>1.</strong> Klik <b>📋 Copy Secret</b> di bawah (atau pilih teks lalu Ctrl+C / Cmd+C)</p>
     <textarea id="helio-modal-textarea" readonly></textarea>
+    <p class="modal-step" style="margin-top:10px"><strong>2.</strong> Klik tombol biru untuk membuka Helio Wallet, lalu paste secret-nya</p>
     <div class="modal-actions">
-      <button class="btn-close-modal" onclick="closeHelioModal()">Tutup</button>
       <button class="btn-copy-manual" onclick="copyFromModal()">📋 Copy Secret</button>
+      <a class="btn-open-helio" id="helio-modal-link" href="https://heliowallet.com/access" target="_blank" rel="noopener">🔗 Buka Helio Wallet</a>
+      <button class="btn-close-modal" onclick="closeHelioModal()">Tutup</button>
     </div>
   </div>
 </div>
