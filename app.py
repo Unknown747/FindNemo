@@ -1,6 +1,7 @@
 import json, os, queue, threading, time
 from flask import Flask, Response, jsonify, render_template, request, send_from_directory
 from main import run_crypto_search, rotator
+from secrets_db import db as secrets_db
 
 app = Flask(__name__, template_folder='templates')
 
@@ -14,6 +15,8 @@ _job = {
     'urls_count':   0,
     'quality_pct':  0,
     'high_quality': 0,
+    'new_secrets':  0,
+    'dup_secrets':  0,
     'error':        None,
 }
 
@@ -24,6 +27,8 @@ def _run_job(keyword, rate_limit, min_score):
     _job['urls_count']   = 0
     _job['quality_pct']  = 0
     _job['high_quality'] = 0
+    _job['new_secrets']  = 0
+    _job['dup_secrets']  = 0
     _job['error']        = None
 
     def on_progress(event):
@@ -32,6 +37,10 @@ def _run_job(keyword, rate_limit, min_score):
             _job['quality_pct']  = event.get('quality_pct', 0)
             _job['high_quality'] = event.get('high_quality_count', 0)
             _job['urls_count']   = event.get('urls_count', 0)
+            _job['new_secrets']  = event.get('new_secrets', 0)
+            _job['dup_secrets']  = event.get('dup_secrets', 0)
+        if event.get('level') == 'vault':
+            _job['queue'].put(event)   # forward live vault updates to browser
 
     try:
         _, findings = run_crypto_search(
@@ -47,7 +56,8 @@ def _run_job(keyword, rate_limit, min_score):
         _job['queue'].put({'level': 'error', 'message': f'Fatal: {e}'})
         _job['queue'].put({'level': 'done', 'message': 'Stopped',
                            'findings_count': 0, 'urls_count': 0,
-                           'high_quality_count': 0, 'quality_pct': 0})
+                           'high_quality_count': 0, 'quality_pct': 0,
+                           'new_secrets': 0, 'dup_secrets': 0})
     finally:
         _job['running'] = False
 
@@ -65,8 +75,8 @@ def index():
 def start_search():
     if _job['running']:
         return jsonify({'ok': False, 'error': 'Search already running.'}), 409
-    data      = request.get_json() or {}
-    keyword   = (data.get('keyword') or '').strip()
+    data       = request.get_json() or {}
+    keyword    = (data.get('keyword') or '').strip()
     rate_limit = float(data.get('rate_limit', 5.0))
     min_score  = int(data.get('min_score', 65))
 
@@ -82,21 +92,15 @@ def start_search():
 
 @app.route('/api/stream')
 def stream():
-    # Accept a cursor so reconnecting clients replay missed messages
-    since = request.args.get('since', 0, type=int)
-
     def gen():
         yield f"data: {json.dumps({'level':'ping','message':'connected'})}\n\n"
         while True:
             try:
-                # Short timeout so heartbeat fires well within proxy limits (~30 s)
                 ev = _job['queue'].get(timeout=8)
                 yield f"data: {json.dumps(ev)}\n\n"
                 if ev.get('level') == 'done':
                     break
             except queue.Empty:
-                # Send a real data event, not just an SSE comment —
-                # proxy keep-alive needs actual bytes on the wire
                 hb = {'level': 'ping', 'message': 'heartbeat',
                       'running': _job['running'], 'ts': int(time.time())}
                 yield f"data: {json.dumps(hb)}\n\n"
@@ -111,16 +115,21 @@ def stream():
 
 @app.route('/api/status')
 def status():
-    findings = _job.get('findings', [])
+    findings  = _job.get('findings', [])
+    db_stats  = secrets_db.stats()
     return jsonify({
-        'running':       _job['running'],
+        'running':        _job['running'],
         'findings_count': len(findings),
-        'urls_count':    _job['urls_count'],
-        'quality_pct':   _job['quality_pct'],
-        'high_quality':  _job['high_quality'],
-        'error':         _job['error'],
-        'tokens':        rotator.status(),
-        'token_count':   rotator.count(),
+        'urls_count':     _job['urls_count'],
+        'quality_pct':    _job['quality_pct'],
+        'high_quality':   _job['high_quality'],
+        'new_secrets':    _job['new_secrets'],
+        'dup_secrets':    _job['dup_secrets'],
+        'error':          _job['error'],
+        'tokens':         rotator.status(),
+        'token_count':    rotator.count(),
+        'vault_total':    db_stats['total'],
+        'vault_by_risk':  db_stats['by_risk'],
     })
 
 
@@ -129,15 +138,45 @@ def findings():
     return jsonify(_job.get('findings', []))
 
 
+# ── Vault (persistent deduplicated secrets) ─────────────────────────────────
+
+@app.route('/api/vault')
+def vault():
+    """All unique secrets ever found, sorted by confidence."""
+    entries = secrets_db.all_entries()
+    return jsonify({'entries': entries, 'stats': secrets_db.stats()})
+
+
+@app.route('/api/vault/stats')
+def vault_stats():
+    return jsonify(secrets_db.stats())
+
+
+@app.route('/api/vault/clear', methods=['POST'])
+def vault_clear():
+    secrets_db.clear()
+    return jsonify({'ok': True})
+
+
+# ── Token management ─────────────────────────────────────────────────────────
+
 @app.route('/api/tokens/reload', methods=['POST'])
 def reload_tokens():
     rotator.reload()
     return jsonify({'ok': True, 'count': rotator.count(), 'tokens': rotator.status()})
 
 
+# ── Downloads ────────────────────────────────────────────────────────────────
+
 @app.route('/download/<path:filename>')
 def download(filename):
     return send_from_directory('crypto_output', filename, as_attachment=True)
+
+
+@app.route('/download/vault')
+def download_vault():
+    """Download the raw secrets_db.json vault file."""
+    return send_from_directory('crypto_output', 'secrets_db.json', as_attachment=True)
 
 
 if __name__ == '__main__':

@@ -1,5 +1,6 @@
 import json, logging, math, os, re, time, threading
 import requests
+from secrets_db import db as secrets_db
 
 logger = logging.getLogger(__name__)
 
@@ -463,7 +464,9 @@ def run_crypto_search(keyword=None, output_dir='./crypto_output',
     log(f"Search queries: {len(dorks)} (CRITICAL first)")
 
     all_findings, all_urls = [], set()
-    seen_shas = set()
+    seen_shas     = set()
+    total_new_db  = 0   # new secrets saved to DB this scan
+    total_dup_db  = 0   # duplicates skipped by DB
 
     for i, (tier, dork) in enumerate(dorks, 1):
         log(f'[{i}/{len(dorks)}] [{tier}] "{dork[:60]}"')
@@ -483,6 +486,22 @@ def run_crypto_search(keyword=None, output_dir='./crypto_output',
         for f in new:
             seen_shas.add(f['commit_sha'])
 
+            # Persist to dedup database — fires immediately on discovery
+            n, d = secrets_db.add_finding(f)
+            total_new_db += n
+            total_dup_db += d
+            if n:
+                log(f'    💾 Saved {n} new secret(s) to vault')
+            if d:
+                log(f'    ⏭  Skipped {d} duplicate(s) already in vault')
+
+            if progress_callback:
+                progress_callback({
+                    'level':   'vault',
+                    'message': f'Vault updated: {secrets_db.stats()["total"]} unique secrets',
+                    'vault_total': secrets_db.stats()['total'],
+                })
+
         all_findings.extend(new)
         all_urls.update(urls)
 
@@ -491,9 +510,8 @@ def run_crypto_search(keyword=None, output_dir='./crypto_output',
             f'total: {len(all_findings)}')
 
         for f in new[:2]:
-            stars = '⭐' * (f['confidence'] // 25)
             log(f'    [{f["risk_label"]}][{f["confidence"]}] {f["repo"]} '
-                f'— {", ".join(m["type"] for m in f["crypto_matches"][:3])} {stars}')
+                f'— {", ".join(m["type"] for m in f["crypto_matches"][:3])}')
 
         time.sleep(rate_limit)
 
@@ -505,12 +523,16 @@ def run_crypto_search(keyword=None, output_dir='./crypto_output',
     high_quality = [f for f in all_findings
                     if f['risk_label'] in ('CRITICAL', 'HIGH')]
     pct = (len(high_quality) / total_f * 100) if total_f else 0
+    db_stats = secrets_db.stats()
 
     log("=" * 60)
     log(f"SCAN COMPLETE")
-    log(f"  Total findings : {total_f}")
-    log(f"  CRITICAL+HIGH  : {len(high_quality)} ({pct:.0f}%)")
-    log(f"  Total URLs     : {len(all_urls)}")
+    log(f"  Total findings     : {total_f}")
+    log(f"  CRITICAL+HIGH      : {len(high_quality)} ({pct:.0f}%)")
+    log(f"  New secrets saved  : {total_new_db}")
+    log(f"  Duplicates skipped : {total_dup_db}")
+    log(f"  Vault total        : {db_stats['total']} unique secrets")
+    log(f"  Total URLs         : {len(all_urls)}")
     log("=" * 60)
 
     # ── Write outputs
