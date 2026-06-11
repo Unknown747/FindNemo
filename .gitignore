@@ -1,0 +1,27 @@
+# ── Scan results (jangan pernah di-push) ─────────────────────────────────────
+crypto_output/
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── Environment & secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+*.secret
+secrets.json
+secrets.js
+
+# ── Replit internal ───────────────────────────────────────────────────────────
+.cache/
+.config/
+.pythonlibs/
+.local/
+.agents/
+replit.nix
