@@ -6,206 +6,129 @@
   <title>Crypto Commit Scanner</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
-      --bg: #0d1117;
-      --surface: #161b22;
-      --border: #30363d;
-      --accent: #f78166;
-      --accent2: #58a6ff;
-      --green: #3fb950;
-      --yellow: #d29922;
-      --red: #f85149;
-      --text: #e6edf3;
-      --muted: #8b949e;
-      --radius: 8px;
+      --bg: #0d1117; --surface: #161b22; --border: #30363d;
+      --accent: #f78166; --blue: #58a6ff; --green: #3fb950;
+      --yellow: #d29922; --red: #f85149; --orange: #e3702e;
+      --text: #e6edf3; --muted: #8b949e; --radius: 8px;
     }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; min-height: 100vh; }
 
-    body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-      font-size: 14px;
-      min-height: 100vh;
-    }
+    header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 13px 24px; display: flex; align-items: center; gap: 12px; }
+    .logo { width: 32px; height: 32px; background: linear-gradient(135deg,var(--accent),var(--blue)); border-radius: 6px; display:flex; align-items:center; justify-content:center; font-size:17px; }
+    header h1 { font-size: 16px; font-weight: 600; }
+    .header-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 
-    header {
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
-      padding: 14px 24px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
+    .badge { display:inline-block; padding:2px 9px; border-radius:10px; font-size:11px; font-weight:600; }
+    .badge-idle    { background:#1f2937; color:var(--muted); }
+    .badge-running { background:#1a3a5c; color:var(--blue); }
+    .badge-done    { background:#1a3b1a; color:var(--green); }
 
-    header .logo {
-      width: 32px; height: 32px;
-      background: linear-gradient(135deg, var(--accent), var(--accent2));
-      border-radius: 6px;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 18px;
-    }
+    .quality-badge { font-size:12px; font-weight:700; }
+    .qbadge-great  { color: var(--green); }
+    .qbadge-ok     { color: var(--yellow); }
+    .qbadge-low    { color: var(--red); }
 
-    header h1 { font-size: 17px; font-weight: 600; }
-    header span { color: var(--muted); font-size: 12px; margin-left: auto; }
+    .container { max-width: 1120px; margin: 0 auto; padding: 20px; }
+    .grid { display: grid; grid-template-columns: 320px 1fr; gap: 18px; }
 
-    .container { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; }
+    .card + .card { margin-top: 14px; }
+    .card h2 { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 14px; }
 
-    .grid { display: grid; grid-template-columns: 340px 1fr; gap: 20px; }
-
-    .card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 20px;
-    }
-
-    .card h2 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 16px; }
-
-    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; margin-top: 14px; }
-    label:first-of-type { margin-top: 0; }
-
+    label { display:block; font-size:11px; color:var(--muted); margin-bottom:5px; margin-top:12px; }
+    label:first-of-type { margin-top:0; }
     input[type=text], input[type=number] {
-      width: 100%;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 8px 12px;
-      color: var(--text);
-      font-size: 13px;
-      outline: none;
-      transition: border-color .15s;
+      width:100%; background:var(--bg); border:1px solid var(--border); border-radius:5px;
+      padding:7px 11px; color:var(--text); font-size:13px; outline:none; transition:border-color .15s;
     }
-    input:focus { border-color: var(--accent2); }
+    input:focus { border-color: var(--blue); }
 
-    .btn {
-      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-      padding: 9px 18px;
-      border: none; border-radius: 6px;
-      font-size: 13px; font-weight: 600; cursor: pointer;
-      transition: opacity .15s;
-    }
-    .btn:disabled { opacity: .45; cursor: not-allowed; }
-    .btn-primary { background: var(--accent2); color: #0d1117; }
-    .btn-danger  { background: var(--red);    color: #fff; }
-    .btn-subtle  { background: var(--border); color: var(--text); }
-    .btn:not(:disabled):hover { opacity: .85; }
+    .range-row { display:flex; align-items:center; gap:8px; }
+    input[type=range] { flex:1; accent-color: var(--blue); }
+    .range-val { font-size:12px; color:var(--blue); font-weight:600; min-width:28px; text-align:right; }
 
-    .btn-row { display: flex; gap: 8px; margin-top: 18px; }
+    .btn { display:inline-flex; align-items:center; justify-content:center; gap:5px; padding:8px 16px; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer; transition:opacity .15s; }
+    .btn:disabled { opacity:.4; cursor:not-allowed; }
+    .btn:not(:disabled):hover { opacity:.82; }
+    .btn-primary { background:var(--blue); color:#0d1117; }
+    .btn-subtle  { background:var(--border); color:var(--text); }
+    .btn-sm      { padding:5px 10px; font-size:11px; }
+    .btn-row     { display:flex; gap:8px; margin-top:14px; }
 
     /* Token list */
-    .token-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
-    .token-item {
-      display: flex; align-items: center; gap: 8px;
-      background: var(--bg); border: 1px solid var(--border);
-      border-radius: 6px; padding: 7px 10px; font-size: 12px;
-    }
-    .token-item .dot {
-      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
-    }
-    .dot-ok   { background: var(--green); }
-    .dot-wait { background: var(--yellow); }
-    .token-item .lbl { flex: 1; font-family: monospace; color: var(--muted); }
-    .token-item .status-lbl { font-size: 11px; }
+    .token-list { display:flex; flex-direction:column; gap:5px; }
+    .token-item { display:flex; align-items:center; gap:7px; background:var(--bg); border:1px solid var(--border); border-radius:5px; padding:6px 10px; font-size:12px; }
+    .dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+    .dot-ok   { background:var(--green); }
+    .dot-wait { background:var(--yellow); animation: pulse 1.2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .token-item .lbl { flex:1; font-family:monospace; color:var(--muted); font-size:11px; }
+    .add-token-row { display:flex; gap:6px; margin-top:8px; }
+    .add-token-row input { flex:1; }
 
-    .add-token-row { display: flex; gap: 6px; margin-top: 10px; }
-    .add-token-row input { flex: 1; }
+    /* Stats */
+    .stats { display:flex; gap:10px; margin-bottom:14px; }
+    .stat { flex:1; background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px 12px; text-align:center; }
+    .stat .val { font-size:24px; font-weight:700; color:var(--accent); }
+    .stat .key { font-size:11px; color:var(--muted); margin-top:2px; }
+    #stat-quality .val { font-size:22px; }
 
-    /* Stats row */
-    .stats { display: flex; gap: 12px; margin-bottom: 16px; }
-    .stat {
-      flex: 1;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 12px 14px;
-      text-align: center;
-    }
-    .stat .val { font-size: 26px; font-weight: 700; color: var(--accent); }
-    .stat .key { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    /* Progress */
+    #progress-bar-wrap { height:3px; background:var(--border); border-radius:2px; margin-bottom:12px; overflow:hidden; }
+    #progress-bar { height:100%; width:0%; background:var(--blue); transition:width .4s; }
+    #progress-bar.indeterminate { animation:indet 1.3s infinite; width:28%; }
+    @keyframes indet { 0%{transform:translateX(-120%)} 100%{transform:translateX(450%)} }
+
+    /* Tabs */
+    .tab-bar { display:flex; gap:2px; border-bottom:1px solid var(--border); margin-bottom:12px; }
+    .tab { padding:7px 15px; font-size:13px; cursor:pointer; border:none; background:none; color:var(--muted); border-bottom:2px solid transparent; transition:color .15s; }
+    .tab.active { color:var(--text); border-bottom-color:var(--blue); }
 
     /* Log */
-    #log {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      height: 300px;
-      overflow-y: auto;
-      padding: 12px;
-      font-family: 'Consolas', 'Menlo', monospace;
-      font-size: 12px;
-      line-height: 1.6;
-    }
-    .log-info    { color: var(--text); }
-    .log-warning { color: var(--yellow); }
-    .log-error   { color: var(--red); }
-    .log-done    { color: var(--green); font-weight: 600; }
-    .log-ts { color: var(--border); margin-right: 6px; }
+    #log { background:var(--bg); border:1px solid var(--border); border-radius:5px; height:290px; overflow-y:auto; padding:10px 12px; font-family:monospace; font-size:12px; line-height:1.65; }
+    .log-info    { color:var(--text); }
+    .log-warning { color:var(--yellow); }
+    .log-error   { color:var(--red); }
+    .log-done    { color:var(--green); font-weight:700; }
+    .log-ts      { color:#3d444d; margin-right:5px; user-select:none; }
 
-    /* Findings */
-    #findings-wrap { margin-top: 16px; }
-    .finding {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-left: 3px solid var(--accent);
-      border-radius: 6px;
-      padding: 12px 14px;
-      margin-bottom: 8px;
-      font-size: 12px;
-    }
-    .finding.high-risk { border-left-color: var(--red); }
-    .finding .f-repo { font-weight: 600; color: var(--accent2); }
-    .finding .f-meta { color: var(--muted); margin: 4px 0; }
-    .finding .f-msg  { color: var(--text); font-style: italic; white-space: pre-wrap; word-break: break-word; }
-    .finding .f-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-    .tag {
-      padding: 2px 7px; border-radius: 12px; font-size: 11px; font-weight: 500;
-      background: #1f2937; color: var(--muted);
-    }
-    .tag.critical { background: #3b1919; color: var(--red); }
+    /* Risk labels */
+    .risk-CRITICAL { color:var(--red); }
+    .risk-HIGH     { color:var(--orange); }
+    .risk-MEDIUM   { color:var(--yellow); }
+    .risk-LOW      { color:var(--muted); }
 
-    .badge {
-      display: inline-block; padding: 1px 7px; border-radius: 10px;
-      font-size: 11px; font-weight: 600;
-    }
-    .badge-running { background: #1a3a5c; color: var(--accent2); }
-    .badge-idle    { background: #1f2937; color: var(--muted); }
-    .badge-done    { background: #1a3b1a; color: var(--green); }
+    /* Finding cards */
+    .finding { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:11px 14px; margin-bottom:8px; font-size:12px; }
+    .finding.critical { border-left:3px solid var(--red); }
+    .finding.high     { border-left:3px solid var(--orange); }
+    .finding.medium   { border-left:3px solid var(--yellow); }
+    .finding-header   { display:flex; align-items:center; gap:8px; margin-bottom:5px; }
+    .finding .f-repo  { font-weight:600; color:var(--blue); flex:1; }
+    .score-pill { padding:2px 8px; border-radius:10px; font-size:11px; font-weight:700; background:#1f2937; }
+    .score-critical { background:#2d1b1b; color:var(--red); }
+    .score-high     { background:#2d1e14; color:var(--orange); }
+    .score-medium   { background:#2d2714; color:var(--yellow); }
+    .finding .f-meta { color:var(--muted); margin:3px 0; }
+    .finding .f-msg  { color:#c9d1d9; font-style:italic; white-space:pre-wrap; word-break:break-word; margin:5px 0; }
+    .f-tags { display:flex; flex-wrap:wrap; gap:4px; margin-top:5px; }
+    .tag { padding:2px 7px; border-radius:10px; font-size:11px; background:#1f2937; color:var(--muted); }
+    .tag.CRITICAL { background:#2d1b1b; color:var(--red); }
+    .tag.HIGH     { background:#2d1e14; color:var(--orange); }
 
-    .dl-row { display: flex; gap: 8px; margin-top: 12px; }
-    .empty { text-align: center; color: var(--muted); padding: 32px 0; font-size: 13px; }
+    .empty { text-align:center; color:var(--muted); padding:28px 0; font-size:13px; }
+    .dl-row { display:flex; gap:8px; margin-top:10px; }
 
-    /* Progress bar */
-    #progress-bar-wrap {
-      height: 3px; background: var(--border); border-radius: 2px; margin-bottom: 14px; overflow: hidden;
-    }
-    #progress-bar {
-      height: 100%; width: 0%; background: var(--accent2);
-      transition: width .4s;
-    }
-    #progress-bar.indeterminate {
-      animation: indeterminate 1.4s infinite;
-      width: 30%;
-    }
-    @keyframes indeterminate {
-      0%   { transform: translateX(-100%); }
-      100% { transform: translateX(400%); }
-    }
+    #tab-findings, #tab-log { display:none; }
+    #tab-findings.visible, #tab-log.visible { display:block; }
 
-    .tab-bar { display: flex; gap: 2px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
-    .tab {
-      padding: 8px 16px; font-size: 13px; cursor: pointer; border: none;
-      background: none; color: var(--muted); border-bottom: 2px solid transparent;
-      transition: color .15s;
-    }
-    .tab.active { color: var(--text); border-bottom-color: var(--accent2); }
+    .audit-bar { background:var(--bg); border:1px solid var(--border); border-radius:5px; padding:8px 14px; font-size:12px; display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+    .audit-bar .ab-label { color:var(--muted); }
+    .quality-track { flex:1; height:6px; background:var(--border); border-radius:3px; overflow:hidden; }
+    .quality-fill  { height:100%; border-radius:3px; transition:width .5s; }
 
-    #tab-findings, #tab-log { display: none; }
-    #tab-findings.visible, #tab-log.visible { display: block; }
-
-    @media (max-width: 768px) {
-      .grid { grid-template-columns: 1fr; }
-    }
+    @media(max-width:768px){ .grid{grid-template-columns:1fr;} }
   </style>
 </head>
 <body>
@@ -213,57 +136,72 @@
 <header>
   <div class="logo">🔍</div>
   <h1>Crypto Commit Scanner</h1>
-  <span id="status-badge" class="badge badge-idle">Idle</span>
+  <div class="header-right">
+    <span id="quality-display" class="quality-badge" style="display:none"></span>
+    <span id="status-badge" class="badge badge-idle">Idle</span>
+  </div>
 </header>
 
 <div class="container">
   <div class="grid">
 
-    <!-- LEFT PANEL -->
+    <!-- LEFT -->
     <div>
       <div class="card">
         <h2>Search Config</h2>
 
         <label>Keyword / Project / Domain</label>
-        <input type="text" id="keyword" placeholder="e.g. myproject, binance, .eth (empty = all)" />
+        <input type="text" id="keyword" placeholder="e.g. hardhat, binance, .eth (empty = all)" />
 
-        <label>Rate Limit (seconds between requests)</label>
-        <input type="number" id="rate-limit" value="5" min="1" max="60" step="0.5" />
+        <label>Rate Limit (seconds per request)</label>
+        <div class="range-row">
+          <input type="range" id="rate-limit" min="2" max="30" value="5" step="1"
+                 oninput="document.getElementById('rl-val').textContent=this.value+'s'" />
+          <span class="range-val" id="rl-val">5s</span>
+        </div>
+
+        <label>Min Confidence Score (filter noise)</label>
+        <div class="range-row">
+          <input type="range" id="min-score" min="30" max="95" value="65" step="5"
+                 oninput="document.getElementById('ms-val').textContent=this.value" />
+          <span class="range-val" id="ms-val">65</span>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">
+          65+ = only HIGH/CRITICAL findings &nbsp;|&nbsp; 45+ = include MEDIUM
+        </div>
 
         <div class="btn-row">
           <button class="btn btn-primary" id="btn-start" onclick="startSearch()">▶ Start Search</button>
-          <button class="btn btn-subtle" onclick="clearLog()">Clear Log</button>
+          <button class="btn btn-subtle" onclick="clearLog()">Clear</button>
         </div>
       </div>
 
-      <!-- TOKEN MANAGER -->
-      <div class="card" style="margin-top:16px">
-        <h2>GitHub Token Rotation</h2>
-        <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
-          Add multiple tokens below. They rotate automatically when one hits the rate limit.
-          Tokens are set as environment variables and persist across restarts.
+      <!-- TOKEN -->
+      <div class="card">
+        <h2>Token Rotation</h2>
+        <p style="font-size:11px;color:var(--muted);margin-bottom:10px">
+          Tokens rotate automatically on rate-limit. Set <code>GITHUB_TOKEN_1</code>,
+          <code>GITHUB_TOKEN_2</code>… in Replit Secrets, then reload.
         </p>
-
         <div class="token-list" id="token-list">
-          <div class="empty" style="padding:12px">No tokens loaded yet</div>
+          <div class="empty" style="padding:10px">No tokens loaded</div>
         </div>
-
-        <div class="add-token-row">
-          <input type="text" id="new-token" placeholder="ghp_xxxxxxxxxxxxx" autocomplete="off" />
-          <button class="btn btn-primary" onclick="addToken()">Add</button>
+        <div class="add-token-row" style="margin-top:10px">
+          <input type="text" id="new-token" placeholder="ghp_xxxxxxxxxxxx" autocomplete="off" />
+          <button class="btn btn-primary btn-sm" onclick="addTokenHelp()">?</button>
         </div>
-
-        <div class="btn-row" style="margin-top:10px">
-          <button class="btn btn-subtle" onclick="reloadTokens()">↺ Reload from ENV</button>
+        <div class="btn-row" style="margin-top:8px">
+          <button class="btn btn-subtle btn-sm" onclick="reloadTokens()">↺ Reload from ENV</button>
         </div>
       </div>
     </div>
 
-    <!-- RIGHT PANEL -->
+    <!-- RIGHT -->
     <div>
       <div class="stats">
         <div class="stat"><div class="val" id="stat-findings">0</div><div class="key">Findings</div></div>
-        <div class="stat"><div class="val" id="stat-urls">0</div><div class="key">URLs</div></div>
+        <div class="stat"><div class="val" id="stat-high">0</div><div class="key">CRIT+HIGH</div></div>
+        <div class="stat" id="stat-quality"><div class="val" id="stat-pct">—</div><div class="key">Quality %</div></div>
         <div class="stat"><div class="val" id="stat-tokens">0</div><div class="key">Tokens</div></div>
       </div>
 
@@ -276,213 +214,227 @@
         </div>
 
         <div id="tab-log" class="visible">
-          <div id="log"><span class="log-info">Ready. Configure tokens and click Start.</span></div>
+          <div id="log"><span class="log-info">Ready. Configure settings and click Start.</span></div>
         </div>
 
         <div id="tab-findings">
+          <div id="audit-bar" class="audit-bar" style="display:none">
+            <span class="ab-label">Quality</span>
+            <div class="quality-track"><div class="quality-fill" id="quality-fill"></div></div>
+            <span id="audit-pct-label" style="font-weight:700;min-width:36px;text-align:right"></span>
+          </div>
           <div id="findings-wrap">
             <div class="empty">No findings yet. Run a search to see results.</div>
           </div>
           <div class="dl-row" id="dl-row" style="display:none">
-            <a class="btn btn-subtle" href="/download/crypto_commit_findings.json" download>⬇ JSON</a>
-            <a class="btn btn-subtle" href="/download/crypto_report.txt" download>⬇ Report</a>
-            <a class="btn btn-subtle" href="/download/crypto_commit_urls.txt" download>⬇ URLs</a>
+            <a class="btn btn-subtle btn-sm" href="/download/crypto_commit_findings.json" download>⬇ JSON</a>
+            <a class="btn btn-subtle btn-sm" href="/download/crypto_report.txt" download>⬇ Report</a>
+            <a class="btn btn-subtle btn-sm" href="/download/crypto_commit_urls.txt" download>⬇ URLs</a>
           </div>
         </div>
       </div>
     </div>
+
   </div>
 </div>
 
 <script>
   let evtSource = null;
-  let pendingTokens = [];   // Tokens added via UI (stored in session, instructed via env)
 
   // ── Tabs ──────────────────────────────────────────────────────────────────
-  function showTab(name) {
-    document.getElementById('tab-log').classList.toggle('visible', name === 'log');
-    document.getElementById('tab-findings').classList.toggle('visible', name === 'findings');
-    document.getElementById('t-log').classList.toggle('active', name === 'log');
-    document.getElementById('t-findings').classList.toggle('active', name === 'findings');
+  function showTab(n) {
+    document.getElementById('tab-log').classList.toggle('visible', n==='log');
+    document.getElementById('tab-findings').classList.toggle('visible', n==='findings');
+    document.getElementById('t-log').classList.toggle('active', n==='log');
+    document.getElementById('t-findings').classList.toggle('active', n==='findings');
   }
 
-  // ── Logging ───────────────────────────────────────────────────────────────
-  function appendLog(level, message) {
+  // ── Log ───────────────────────────────────────────────────────────────────
+  function appendLog(level, msg) {
     const log = document.getElementById('log');
-    const line = document.createElement('div');
+    const d = document.createElement('div');
     const ts = new Date().toLocaleTimeString();
-    line.innerHTML = `<span class="log-ts">[${ts}]</span><span class="log-${level}">${escHtml(message)}</span>`;
-    log.appendChild(line);
+    d.innerHTML = `<span class="log-ts">[${ts}]</span><span class="log-${level}">${esc(msg)}</span>`;
+    log.appendChild(d);
     log.scrollTop = log.scrollHeight;
   }
-
-  function clearLog() {
-    document.getElementById('log').innerHTML = '';
-  }
-
-  function escHtml(s) {
+  function clearLog() { document.getElementById('log').innerHTML = ''; }
+  function esc(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
-  // ── Search ─────────────────────────────────────────────────────────────────
+  // ── Start ─────────────────────────────────────────────────────────────────
   async function startSearch() {
-    const keyword = document.getElementById('keyword').value.trim();
-    const rateLimit = parseFloat(document.getElementById('rate-limit').value) || 5;
-
+    const keyword  = document.getElementById('keyword').value.trim();
+    const rateLimit = parseInt(document.getElementById('rate-limit').value);
+    const minScore  = parseInt(document.getElementById('min-score').value);
     const btn = document.getElementById('btn-start');
     btn.disabled = true;
-
     clearLog();
-    appendLog('info', 'Starting search…');
+    appendLog('info', `Starting scan… (min confidence: ${minScore})`);
     setStatus('running');
     startProgress();
 
     const res = await fetch('/api/start', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ keyword, rate_limit: rateLimit })
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({keyword, rate_limit: rateLimit, min_score: minScore})
     });
-
     if (!res.ok) {
-      const err = await res.json();
-      appendLog('error', err.error || 'Failed to start.');
-      setStatus('idle');
-      stopProgress();
-      btn.disabled = false;
+      const e = await res.json();
+      appendLog('error', e.error || 'Failed to start.');
+      setStatus('idle'); stopProgress(); btn.disabled = false;
       return;
     }
 
-    // SSE stream
     if (evtSource) evtSource.close();
     evtSource = new EventSource('/api/stream');
-
-    evtSource.onmessage = (e) => {
-      const data = JSON.parse(e.data);
-      appendLog(data.level, data.message);
-
-      if (data.level === 'done') {
-        evtSource.close();
-        evtSource = null;
-        setStatus('done');
-        stopProgress();
-        btn.disabled = false;
-        fetchFindings();
-        fetchStatus();
+    evtSource.onmessage = e => {
+      const d = JSON.parse(e.data);
+      appendLog(d.level, d.message);
+      if (d.level === 'done') {
+        evtSource.close(); evtSource = null;
+        setStatus('done'); stopProgress(); btn.disabled = false;
+        fetchFindings(); fetchStatus();
         document.getElementById('dl-row').style.display = 'flex';
+        showQuality(d.quality_pct ?? 0, d.high_quality_count ?? 0);
       }
     };
-
     evtSource.onerror = () => {
       appendLog('error', 'Stream disconnected.');
-      evtSource.close();
-      evtSource = null;
-      setStatus('idle');
-      stopProgress();
-      btn.disabled = false;
+      evtSource.close(); evtSource = null;
+      setStatus('idle'); stopProgress(); btn.disabled = false;
     };
   }
 
-  // ── Status ─────────────────────────────────────────────────────────────────
+  // ── Status / badge ────────────────────────────────────────────────────────
   function setStatus(s) {
     const el = document.getElementById('status-badge');
     el.className = 'badge badge-' + s;
     el.textContent = s.charAt(0).toUpperCase() + s.slice(1);
   }
 
-  async function fetchStatus() {
-    const res = await fetch('/api/status');
-    const data = await res.json();
-    document.getElementById('stat-findings').textContent = data.findings_count ?? 0;
-    document.getElementById('stat-urls').textContent     = data.urls_count ?? 0;
-    document.getElementById('stat-tokens').textContent   = data.token_count ?? 0;
-    renderTokenList(data.tokens || []);
+  function showQuality(pct, highCount) {
+    const qd = document.getElementById('quality-display');
+    const cls = pct >= 80 ? 'qbadge-great' : pct >= 60 ? 'qbadge-ok' : 'qbadge-low';
+    qd.className = 'quality-badge ' + cls;
+    qd.textContent = `Quality: ${pct}%`;
+    qd.style.display = '';
+    document.getElementById('stat-pct').textContent = pct + '%';
+    document.getElementById('stat-pct').style.color =
+      pct >= 80 ? 'var(--green)' : pct >= 60 ? 'var(--yellow)' : 'var(--red)';
   }
 
-  // ── Progress bar ──────────────────────────────────────────────────────────
+  async function fetchStatus() {
+    const d = await (await fetch('/api/status')).json();
+    document.getElementById('stat-findings').textContent = d.findings_count ?? 0;
+    document.getElementById('stat-tokens').textContent   = d.token_count ?? 0;
+    document.getElementById('stat-high').textContent     = d.high_quality ?? 0;
+    if (d.quality_pct) {
+      showQuality(d.quality_pct, d.high_quality ?? 0);
+    }
+    renderTokenList(d.tokens || []);
+  }
+
+  // ── Progress ──────────────────────────────────────────────────────────────
   function startProgress() {
-    const bar = document.getElementById('progress-bar');
-    bar.classList.add('indeterminate');
-    bar.style.width = '';
+    const b = document.getElementById('progress-bar');
+    b.classList.add('indeterminate'); b.style.width = '';
   }
   function stopProgress() {
-    const bar = document.getElementById('progress-bar');
-    bar.classList.remove('indeterminate');
-    bar.style.width = '100%';
-    setTimeout(() => { bar.style.width = '0%'; }, 1500);
+    const b = document.getElementById('progress-bar');
+    b.classList.remove('indeterminate'); b.style.width = '100%';
+    setTimeout(() => { b.style.width = '0%'; }, 1800);
   }
 
   // ── Findings ──────────────────────────────────────────────────────────────
   async function fetchFindings() {
-    const res = await fetch('/api/findings');
-    const findings = await res.json();
+    const findings = await (await fetch('/api/findings')).json();
     document.getElementById('stat-findings').textContent = findings.length;
+
+    const hq = findings.filter(f => ['CRITICAL','HIGH'].includes(f.risk_label));
+    document.getElementById('stat-high').textContent = hq.length;
+
+    const pct = findings.length ? Math.round(hq.length / findings.length * 100) : 0;
+    showQuality(pct, hq.length);
+
+    // Audit bar
+    const ab = document.getElementById('audit-bar');
+    if (findings.length) {
+      ab.style.display = 'flex';
+      const fill = document.getElementById('quality-fill');
+      fill.style.width = pct + '%';
+      fill.style.background = pct >= 80 ? 'var(--green)' : pct >= 60 ? 'var(--yellow)' : 'var(--red)';
+      document.getElementById('audit-pct-label').textContent = pct + '%';
+    }
 
     const wrap = document.getElementById('findings-wrap');
     if (!findings.length) {
-      wrap.innerHTML = '<div class="empty">No findings matched the crypto patterns.</div>';
+      wrap.innerHTML = '<div class="empty">No findings passed the confidence threshold.</div>';
       return;
     }
 
-    const HIGH_RISK_TYPES = ['eth_private_key','btc_wif','btc_wif_compressed','mnemonic_12','mnemonic_24','pem_key'];
+    const HIGH_TYPES = ['eth_private_key','btc_wif','btc_wif_compressed',
+                        'mnemonic_12','mnemonic_24','pem_private_key',
+                        'raw_hex_key','env_mnemonic','env_private_key'];
 
     wrap.innerHTML = findings.map(f => {
-      const isHigh = f.crypto_matches.some(m => HIGH_RISK_TYPES.includes(m.type));
-      const tags = f.crypto_matches.map(m =>
-        `<span class="tag ${HIGH_RISK_TYPES.includes(m.type) ? 'critical' : ''}">${escHtml(m.type)}</span>`
-      ).join('');
+      const rl  = f.risk_label || 'MEDIUM';
+      const cls = rl === 'CRITICAL' ? 'critical' : rl === 'HIGH' ? 'high' : 'medium';
+      const spc = `score-${cls}`;
+      const tags = (f.crypto_matches || []).map(m => {
+        const tc = HIGH_TYPES.includes(m.type) ? m.tier || 'CRITICAL' : '';
+        return `<span class="tag ${tc}">${esc(m.type)}</span>`;
+      }).join('');
       return `
-        <div class="finding ${isHigh ? 'high-risk' : ''}">
-          <div class="f-repo"><a href="${escHtml(f.commit_url)}" target="_blank" style="color:inherit">${escHtml(f.repo)}</a></div>
-          <div class="f-meta">${escHtml(f.author)} · ${escHtml(f.date)} · <code>${escHtml(f.commit_sha.slice(0,8))}</code></div>
-          <div class="f-msg">${escHtml(f.message.slice(0,300))}</div>
+        <div class="finding ${cls}">
+          <div class="finding-header">
+            <div class="f-repo">
+              <a href="${esc(f.commit_url)}" target="_blank" style="color:inherit;text-decoration:none">
+                ${esc(f.repo)}
+              </a>
+            </div>
+            <span class="score-pill ${spc}">${esc(rl)} · ${f.confidence}/100</span>
+          </div>
+          <div class="f-meta">${esc(f.author)} · ${esc(f.date)} · <code>${esc((f.commit_sha||'').slice(0,8))}</code></div>
+          <div class="f-msg">${esc((f.message||'').slice(0,300))}</div>
           <div class="f-tags">${tags}</div>
         </div>`;
     }).join('');
   }
 
-  // ── Token manager ─────────────────────────────────────────────────────────
+  // ── Tokens ────────────────────────────────────────────────────────────────
   function renderTokenList(tokens) {
     document.getElementById('stat-tokens').textContent = tokens.length;
     const list = document.getElementById('token-list');
     if (!tokens.length) {
-      list.innerHTML = '<div class="empty" style="padding:12px">No tokens loaded. Add one below.</div>';
+      list.innerHTML = '<div class="empty" style="padding:8px">No tokens — add via Replit Secrets</div>';
       return;
     }
     list.innerHTML = tokens.map(t => `
       <div class="token-item">
         <div class="dot ${t.available ? 'dot-ok' : 'dot-wait'}"></div>
-        <span class="lbl">${escHtml(t.token)}</span>
-        <span class="status-lbl" style="color:${t.available ? 'var(--green)' : 'var(--yellow)'}">
+        <span class="lbl">${esc(t.token)}</span>
+        <span style="font-size:11px;color:${t.available ? 'var(--green)' : 'var(--yellow)'}">
           ${t.available ? 'Ready' : 'Rate-limited'}
         </span>
       </div>`).join('');
   }
 
   async function reloadTokens() {
-    const res = await fetch('/api/tokens/reload', { method: 'POST' });
-    const data = await res.json();
-    renderTokenList(data.tokens || []);
-    appendLog('info', `Tokens reloaded. ${data.count} active.`);
+    const d = await (await fetch('/api/tokens/reload',{method:'POST'})).json();
+    renderTokenList(d.tokens || []);
+    appendLog('info', `Tokens reloaded — ${d.count} active.`);
   }
 
-  function addToken() {
-    const inp = document.getElementById('new-token');
-    const token = inp.value.trim();
-    if (!token) return;
-    if (!token.startsWith('ghp_') && !token.startsWith('github_pat_') && token.length < 20) {
-      appendLog('warning', 'Token looks invalid. It should start with ghp_ or github_pat_');
-      return;
-    }
-
-    // Show instructions since we can't set env vars from the browser
-    appendLog('info', `To add this token, set the environment variable GITHUB_TOKEN_${Date.now()} = ${token.slice(0,4)}… in Replit Secrets, then click "Reload from ENV".`);
-    appendLog('info', `Or add it to GITHUB_TOKENS as a comma-separated list.`);
-    inp.value = '';
+  function addTokenHelp() {
+    appendLog('info', 'To add tokens: Replit Secrets → add GITHUB_TOKEN_1, GITHUB_TOKEN_2, … then click "Reload from ENV".');
+    appendLog('info', 'Or add comma-separated list as GITHUB_TOKENS secret.');
   }
 
-  // ── Poll status every 5s ──────────────────────────────────────────────────
+  // ── Poll ──────────────────────────────────────────────────────────────────
   fetchStatus();
-  setInterval(fetchStatus, 5000);
+  setInterval(fetchStatus, 6000);
 </script>
 </body>
 </html>

@@ -1,7 +1,39 @@
-import json, logging, os, re, time, threading
+import json, logging, math, os, re, time, threading
 import requests
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# BIP-39 wordlist loader
+# ---------------------------------------------------------------------------
+
+def _load_bip39():
+    path = os.path.join(os.path.dirname(__file__), 'bip39_words.txt')
+    try:
+        with open(path) as f:
+            return set(w.strip().lower() for w in f if w.strip())
+    except Exception:
+        return set()
+
+BIP39_WORDS = _load_bip39()
+
+def is_valid_bip39(phrase):
+    """Return True if ALL words in the phrase are BIP-39 words."""
+    if not BIP39_WORDS:
+        return False
+    words = phrase.lower().split()
+    return len(words) >= 12 and all(w in BIP39_WORDS for w in words)
+
+def shannon_entropy(s):
+    """Shannon entropy (bits/char). Real keys are typically > 3.5."""
+    if not s:
+        return 0.0
+    freq = {}
+    for c in s:
+        freq[c] = freq.get(c, 0) + 1
+    n = len(s)
+    return -sum((v/n) * math.log2(v/n) for v in freq.values())
+
 
 # ---------------------------------------------------------------------------
 # Token Rotation
@@ -10,34 +42,25 @@ logger = logging.getLogger(__name__)
 class TokenRotator:
     """
     Rotate through multiple GitHub tokens.
-    Tokens are read from:
-      - GITHUB_TOKEN          (single token, legacy)
-      - GITHUB_TOKEN_1 .. N   (multiple tokens)
-      - GITHUB_TOKENS         (comma-separated list)
+    Reads from: GITHUB_TOKEN, GITHUB_TOKEN_1..N, GITHUB_TOKENS (comma-sep).
     """
     def __init__(self):
         self._tokens = []
-        self._reset_at = {}   # token -> unix timestamp when it becomes usable again
+        self._reset_at = {}
         self._lock = threading.Lock()
+        self._index = 0
         self._load()
 
     def _load(self):
-        seen = set()
-        tokens = []
-        # Comma-separated list
-        bulk = os.environ.get('GITHUB_TOKENS', '')
-        for t in bulk.split(','):
+        seen, tokens = set(), []
+        for t in os.environ.get('GITHUB_TOKENS', '').split(','):
             t = t.strip()
             if t and t not in seen:
-                seen.add(t)
-                tokens.append(t)
-        # Numbered tokens
+                seen.add(t); tokens.append(t)
         for i in range(1, 20):
             t = os.environ.get(f'GITHUB_TOKEN_{i}', '').strip()
             if t and t not in seen:
-                seen.add(t)
-                tokens.append(t)
-        # Legacy single token
+                seen.add(t); tokens.append(t)
         t = os.environ.get('GITHUB_TOKEN', '').strip()
         if t and t not in seen:
             tokens.append(t)
@@ -56,148 +79,283 @@ class TokenRotator:
             return self._next_available()
 
     def _next_available(self):
-        """Return first token not currently rate-limited (or None)."""
         now = time.time()
         for offset in range(len(self._tokens)):
             idx = (self._index + offset) % len(self._tokens)
             t = self._tokens[idx]
-            reset = self._reset_at.get(t, 0)
-            if now >= reset:
+            if now >= self._reset_at.get(t, 0):
                 self._index = idx
                 return t
         return None
 
     def mark_rate_limited(self, token, reset_ts):
-        """Mark a token as rate-limited until reset_ts (unix timestamp)."""
         with self._lock:
             self._reset_at[token] = reset_ts
-            logger.warning(f'Token ...{token[-6:]} rate-limited until {time.strftime("%H:%M:%S", time.localtime(reset_ts))}')
-            # Advance to next
-            self._index = (self._index + 1) % len(self._tokens)
+            logger.warning(f'Token ...{token[-6:]} rate-limited until '
+                           f'{time.strftime("%H:%M:%S", time.localtime(reset_ts))}')
+            self._index = (self._index + 1) % max(len(self._tokens), 1)
 
     def headers(self, token=None):
         if token is None:
             token = self.current()
-        h = {
-            'Accept': 'application/vnd.github.cloak-preview+json',
-            'User-Agent': 'crypto-commit-dorker/2.0'
-        }
+        h = {'Accept': 'application/vnd.github.cloak-preview+json',
+             'User-Agent': 'crypto-commit-dorker/2.0'}
         if token:
             h['Authorization'] = f'Bearer {token}'
         return h
 
     def status(self):
         now = time.time()
-        result = []
-        for t in self._tokens:
-            reset = self._reset_at.get(t, 0)
-            result.append({
-                'token': f'...{t[-6:]}',
-                'available': now >= reset,
-                'reset_at': reset if reset > now else None
-            })
-        return result
+        return [{'token': f'...{t[-6:]}',
+                 'available': now >= self._reset_at.get(t, 0),
+                 'reset_at': self._reset_at.get(t, 0) if now < self._reset_at.get(t, 0) else None}
+                for t in self._tokens]
 
 
-# Global rotator instance
 rotator = TokenRotator()
 
 
 # ---------------------------------------------------------------------------
-# Crypto patterns
+# Dork catalogue  — tiered by confidence
 # ---------------------------------------------------------------------------
+# CRITICAL: almost guaranteed to be a real secret
+# HIGH    : very likely a real secret
+# MEDIUM  : possible, needs scoring to confirm
+# LOW     : generic, too noisy — skipped by default
 
-CRYPTO_DORK_TEMPLATES = [
-    'private key', 'BEGIN PRIVATE KEY', 'BEGIN EC PRIVATE KEY',
-    'mnemonic phrase', 'seed phrase', 'recovery phrase',
-    'wallet private key', 'ethereum private key', 'bitcoin private key',
-    '0x[a-fA-F0-9]{64}',
-    '5[J-K][a-zA-Z0-9]{49}',
-    'L[a-zA-Z0-9]{51}', 'K[a-zA-Z0-9]{51}',
-    'infura project id', 'infura_secret',
-    'alchemy api key', 'alchemy_url',
-    'moralis api key', 'quicknode api key',
-    'web3 provider', 'web3_endpoint',
-    'etherscan api key', 'bscscan api key',
-    'binance api key', 'binance_secret',
-    'coinbase api key', 'coinbase_secret',
-    'kucoin api key', 'kraken api key',
-    'deployer private key', 'owner private key',
-    'admin wallet', 'treasury wallet',
-    'multisig address', 'cold wallet',
-    '.env', '.secret', 'config.json', 'hardhat.config.js',
-    'truffle-config.js', 'foundry.toml', 'Brownie config',
-    'wss://', 'https://mainnet.infura.io', 'https://rpc.ankr.com',
-    '.eth', '.crypto',
-    'web3.eth.accounts', 'ethers.Wallet', 'new ethers.Wallet',
-    'web3.eth.accounts.wallet.add', 'privateKey:',
-]
-
-CRYPTO_PATTERNS = {
-    'eth_private_key': r'0x[a-fA-F0-9]{64}',
-    'btc_wif': r'5[HJK][1-9A-Za-z][^OIl]{49}',
-    'btc_wif_compressed': r'[KL][1-9A-Za-z][^OIl]{51}',
-    'mnemonic_12': r'\b(?:[a-z]+ ){11}[a-z]+\b',
-    'mnemonic_24': r'\b(?:[a-z]+ ){23}[a-z]+\b',
-    'pem_key': r'-----BEGIN (?:EC|RSA|DSA) PRIVATE KEY-----',
+DORK_TIERS = {
+    'CRITICAL': [
+        'BEGIN EC PRIVATE KEY',
+        'BEGIN RSA PRIVATE KEY',
+        'BEGIN DSA PRIVATE KEY',
+        'BEGIN OPENSSH PRIVATE KEY',
+        'mnemonic phrase',
+        'seed phrase',
+        'recovery phrase',
+        'wallet mnemonic',
+        'ethereum private key',
+        'bitcoin private key',
+        'deployer private key',
+        'owner private key',
+        'privateKey: 0x',
+        'PRIVATE_KEY=0x',
+        'MNEMONIC=',
+    ],
+    'HIGH': [
+        'hardhat.config private key',
+        'foundry.toml private_key',
+        'web3.eth.accounts.wallet.add',
+        'new ethers.Wallet',
+        'Wallet.fromMnemonic',
+        'ethers.Wallet.fromMnemonic',
+        'infura_secret',
+        'alchemy api key',
+        'INFURA_PROJECT_SECRET',
+        'binance_secret',
+        'coinbase_secret',
+        'kucoin api key',
+        'kraken api key',
+        'ETHERSCAN_API_KEY',
+        'BSCSCAN_API_KEY',
+        'ALCHEMY_API_KEY',
+        'QUICKNODE_API_KEY',
+    ],
+    'MEDIUM': [
+        'private key',
+        'wallet private key',
+        'admin wallet',
+        'treasury wallet',
+        'cold wallet',
+        'infura project id',
+        'web3 provider',
+        'moralis api key',
+        'hardhat.config.js',
+        'truffle-config.js',
+    ],
+    'LOW': [   # Not searched by default
+        '.env', '.secret', 'config.json',
+        'wss://', '.eth', '.crypto', 'web3_endpoint',
+        'multisig address', 'web3.eth.accounts',
+    ],
 }
 
-STATIC_JUNK_EXT = {'.css','.png','.jpg','.jpeg','.gif','.svg','.ico',
-                   '.woff','.woff2','.ttf','.eot','.webp','.bmp','.map',
-                   '.mp4', '.mp3', '.wav', '.pdf', '.doc', '.docx'}
-URL_PAT = re.compile(r'https?://[^\s"\'<>]+')
+# Flatten ordered list for iteration (CRITICAL first)
+def get_ordered_dorks(keyword=None, include_low=False):
+    dorks = []
+    seen = set()
+    for tier in (['CRITICAL', 'HIGH', 'MEDIUM'] + (['LOW'] if include_low else [])):
+        for d in DORK_TIERS[tier]:
+            if d not in seen:
+                seen.add(d)
+                dorks.append((tier, d))
+    if keyword:
+        kw_dorks = [
+            (f'"{keyword}" mnemonic phrase', 'CRITICAL'),
+            (f'"{keyword}" BEGIN PRIVATE KEY', 'CRITICAL'),
+            (f'"{keyword}" ethereum private key', 'CRITICAL'),
+            (f'"{keyword}" PRIVATE_KEY', 'HIGH'),
+            (f'"{keyword}" deployer', 'HIGH'),
+            (f'"{keyword}" wallet secret', 'HIGH'),
+            (f'"{keyword}" api key', 'MEDIUM'),
+        ]
+        for d, t in kw_dorks:
+            if d not in seen:
+                seen.add(d)
+                dorks.append((t, d))
+    return dorks
+
+
+# ---------------------------------------------------------------------------
+# Regex patterns for direct secret detection
+# ---------------------------------------------------------------------------
+
+CRYPTO_PATTERNS = {
+    'eth_private_key':    (r'(?<![0-9a-fA-F])0x[a-fA-F0-9]{64}(?![0-9a-fA-F])', 'CRITICAL'),
+    'btc_wif':            (r'\b5[HJK][1-9A-Za-z][^OIl0]{48}\b',                  'CRITICAL'),
+    'btc_wif_compressed': (r'\b[KL][1-9A-Za-z][^OIl0]{50}\b',                    'CRITICAL'),
+    'mnemonic_12':        (r'\b([a-z]{3,10} ){11}[a-z]{3,10}\b',                  'HIGH'),
+    'mnemonic_24':        (r'\b([a-z]{3,10} ){23}[a-z]{3,10}\b',                  'CRITICAL'),
+    'pem_private_key':    (r'-----BEGIN (?:EC|RSA|DSA|OPENSSH) PRIVATE KEY-----', 'CRITICAL'),
+    'raw_hex_key':        (r'(?i)(?:private[_\s]?key|pk|secret)["\s:=]+([0-9a-fA-F]{64})', 'CRITICAL'),
+    'env_mnemonic':       (r'(?i)MNEMONIC\s*=\s*["\']?([a-z]+ ){11,23}[a-z]+',   'CRITICAL'),
+    'env_private_key':    (r'(?i)PRIVATE_KEY\s*=\s*0x[a-fA-F0-9]{64}',           'CRITICAL'),
+    'infura_secret':      (r'(?i)infura[_\s]?(secret|api[_\s]?secret)\s*[=:]\s*[0-9a-f]{32}', 'HIGH'),
+    'alchemy_key':        (r'(?i)alchemy[_\s]?(api[_\s]?key|key)\s*[=:]\s*[A-Za-z0-9_-]{32,}', 'HIGH'),
+}
+
+# Patterns that suggest this commit is test/doc/noise → lower score
+NOISE_PATTERNS = [
+    r'(?i)(test|mock|dummy|example|sample|placeholder|tutorial|demo)',
+    r'(?i)(readme|documentation|docs/|\.md)',
+    r'(?i)(TODO|FIXME|xxx{3,})',
+    r'0{10,}|f{10,}|1{10,}',                      # all-same repeated chars
+    r'(?:1234){3,}|(?:abcd){3,}|(?:0123){3,}',    # obviously sequential placeholders
+    r'(?i)node_modules',
+    r'0x[0-9a-fA-F]{0,4}(?:0{10,}|f{10,})',  # All-zero or all-F keys
+]
+
+# Context keywords that boost confidence
+BOOST_KEYWORDS = [
+    r'(?i)(\.env|dotenv)',
+    r'(?i)(hardhat|foundry|truffle|brownie)',
+    r'(?i)(deploy|deployer)',
+    r'(?i)(mainnet|ropsten|rinkeby|goerli|polygon|arbitrum|bsc)',
+    r'(?i)(infura|alchemy|quicknode|moralis)',
+    r'(?i)(wallet|account|signer)',
+]
+
+# ---------------------------------------------------------------------------
+# Confidence scoring
+# ---------------------------------------------------------------------------
+
+def score_finding(message, crypto_matches, dork_tier='MEDIUM'):
+    """
+    Returns an integer confidence score 0-100 and a label.
+    Aim: findings with score >= 65 are reported.
+    """
+    score = 0
+
+    # Base score from dork tier
+    tier_base = {'CRITICAL': 40, 'HIGH': 25, 'MEDIUM': 15, 'LOW': 5}
+    score += tier_base.get(dork_tier, 15)
+
+    # Score from matched patterns
+    # mnemonic_12 promoted to critical: a 12-word BIP-39 phrase is a real key
+    critical_types = {'eth_private_key', 'btc_wif', 'btc_wif_compressed',
+                      'mnemonic_12', 'mnemonic_24', 'pem_private_key',
+                      'raw_hex_key', 'env_mnemonic', 'env_private_key'}
+    high_types     = {'infura_secret', 'alchemy_key'}
+
+    for m in crypto_matches:
+        t = m['type']
+        if t in critical_types:
+            score += 35
+            # BIP-39 validation for any mnemonic type
+            if 'mnemonic' in t and m.get('match'):
+                if is_valid_bip39(m['match']):
+                    score += 20  # valid BIP-39 wordlist — confirmed real mnemonic
+                else:
+                    score -= 15  # penalise random-word sequences
+            # Entropy check for hex keys
+            if 'key' in t or 'hex' in t:
+                raw = re.sub(r'0x', '', m.get('match', ''), flags=re.I)
+                ent = shannon_entropy(raw)
+                if ent < 2.5:     # too uniform → placeholder/fake
+                    score -= 25
+                elif ent > 3.8:
+                    score += 10
+        elif t in high_types:
+            score += 20
+            # Bonus: match actually contains a credential value (hex/base64 string)
+            match_val = m.get('match', '')
+            if re.search(r'[0-9a-zA-Z_-]{20,}', match_val):
+                score += 15  # real credential present, not just the label
+        else:
+            score += 8   # keyword_* matches
+
+    # Boost: context suggests real deployment / secrets
+    for pat in BOOST_KEYWORDS:
+        if re.search(pat, message):
+            score += 8
+            break  # only count once
+
+    # Noise penalty
+    for pat in NOISE_PATTERNS:
+        if re.search(pat, message):
+            score -= 20
+            break
+
+    score = max(0, min(100, score))
+
+    if score >= 85:   label = 'CRITICAL'
+    elif score >= 65: label = 'HIGH'
+    elif score >= 45: label = 'MEDIUM'
+    else:             label = 'LOW'
+
+    return score, label
+
+
+# ---------------------------------------------------------------------------
+# GitHub API
+# ---------------------------------------------------------------------------
+
 COMMIT_API = 'https://api.github.com/search/commits'
 
-
-# ---------------------------------------------------------------------------
-# API queries with rotation
-# ---------------------------------------------------------------------------
-
-def query_commits(dork, page=1):
-    """Query GitHub Commit API with token rotation."""
-    per_page = 30
-
+def query_commits(dork, page=1, _depth=0):
+    if _depth > 4:
+        return {}
     token = rotator.current()
     headers = rotator.headers(token)
-
     try:
-        params = {
-            'q': dork,
-            'per_page': per_page,
-            'page': page,
-            'sort': 'committer-date',
-            'order': 'desc'
-        }
-
-        r = requests.get(COMMIT_API, headers=headers, params=params, timeout=20)
+        r = requests.get(COMMIT_API, headers=headers, timeout=20, params={
+            'q': dork, 'per_page': 30, 'page': page,
+            'sort': 'committer-date', 'order': 'desc'
+        })
 
         if r.status_code in (403, 429):
-            reset_ts = int(r.headers.get('X-RateLimit-Reset', time.time() + 60))
+            reset_ts = int(r.headers.get('X-RateLimit-Reset', time.time() + 61))
             if token:
                 rotator.mark_rate_limited(token, reset_ts + 2)
-            # Try with next token immediately
-            next_token = rotator.current()
-            if next_token and next_token != token:
-                return query_commits(dork, page)
-            # All tokens exhausted — wait
+            next_tok = rotator.current()
+            if next_tok and next_tok != token:
+                return query_commits(dork, page, _depth + 1)
             wait = max(reset_ts - int(time.time()), 10) + 2
-            logger.warning(f'All tokens rate-limited. Waiting {wait}s...')
+            logger.warning(f'All tokens rate-limited. Waiting {wait}s…')
             time.sleep(wait)
-            return query_commits(dork, page)
+            return query_commits(dork, page, _depth + 1)
 
         if r.status_code == 422:
-            logger.debug(f'Unprocessable query: {dork}')
+            logger.debug(f'Unprocessable: {dork}')
             return {}
 
         r.raise_for_status()
         data = r.json()
         items = data.get('items', [])
 
-        if len(items) == per_page and page < 3:
+        if len(items) == 30 and page < 3:
             time.sleep(1)
-            next_page = query_commits(dork, page + 1)
-            if next_page.get('items'):
-                items.extend(next_page['items'])
+            nxt = query_commits(dork, page + 1, _depth)
+            items += nxt.get('items', [])
 
         return {'items': items, 'total_count': data.get('total_count', 0)}
 
@@ -206,185 +364,194 @@ def query_commits(dork, page=1):
         return {}
 
 
-def extract_crypto_from_commit(commit_data, keyword=None):
-    findings = []
-    urls = set()
+# ---------------------------------------------------------------------------
+# Extraction + scoring
+# ---------------------------------------------------------------------------
+
+URL_PAT = re.compile(r'https?://[^\s"\'<>]+')
+
+def extract_findings(commit_data, keyword=None, dork_tier='MEDIUM', min_score=65):
+    findings, urls = [], set()
 
     for item in commit_data.get('items', []):
-        repo_name = item.get('repository', {}).get('full_name', 'unknown')
+        repo   = item.get('repository', {}).get('full_name', 'unknown')
         commit = item.get('commit', {})
-        commit_sha = item.get('sha', '')
-        commit_html = item.get('html_url', '')
-        message = commit.get('message', '')
+        sha    = item.get('sha', '')
+        url    = item.get('html_url', '')
+        msg    = commit.get('message', '')
         author = commit.get('author', {}).get('name', 'unknown')
-        date = commit.get('author', {}).get('date', '')
+        date   = commit.get('author', {}).get('date', '')
 
-        for url in URL_PAT.findall(message):
-            urls.add(url.rstrip('.,;:)!?"\''))
+        for u in URL_PAT.findall(msg):
+            urls.add(u.rstrip('.,;:)!?"\''))
 
         crypto_matches = []
-        for crypto_type, pattern in CRYPTO_PATTERNS.items():
-            m = re.search(pattern, message, re.IGNORECASE)
+
+        # Regex-based detection
+        for pat_name, (pattern, pat_tier) in CRYPTO_PATTERNS.items():
+            m = re.search(pattern, msg, re.IGNORECASE)
             if m:
-                crypto_matches.append({'type': crypto_type, 'match': m.group()})
+                crypto_matches.append({
+                    'type': pat_name,
+                    'tier': pat_tier,
+                    'match': m.group()[:120],
+                })
 
-        message_lower = message.lower()
-        for kw in ['private key', 'mnemonic', 'seed', 'wallet', 'password',
-                   'secret', 'api key', 'token', '0x', 'deploy']:
-            if kw in message_lower:
-                if not any(m['type'] == kw for m in crypto_matches):
-                    crypto_matches.append({'type': f'keyword_{kw.replace(" ", "_")}', 'match': kw})
+        # Keyword fallback (only if no regex matched)
+        if not crypto_matches:
+            kws = ['private key', 'mnemonic', 'seed phrase', 'wallet', 'deployer',
+                   'BEGIN PRIVATE KEY', 'MNEMONIC=', 'PRIVATE_KEY=']
+            for kw in kws:
+                if kw.lower() in msg.lower():
+                    crypto_matches.append({'type': f'keyword_{kw.replace(" ","_")}',
+                                           'tier': 'MEDIUM', 'match': kw})
 
-        if keyword and keyword.lower() in message_lower:
-            crypto_matches.append({'type': f'target_keyword_{keyword}', 'match': keyword})
+        if keyword and keyword.lower() in msg.lower():
+            crypto_matches.append({'type': f'target_{keyword}',
+                                   'tier': 'HIGH', 'match': keyword})
 
-        if crypto_matches or (keyword and keyword.lower() in message_lower):
-            findings.append({
-                'repo': repo_name,
-                'commit_sha': commit_sha,
-                'commit_url': commit_html,
-                'author': author,
-                'date': date,
-                'message': message[:500],
-                'crypto_matches': crypto_matches,
-                'urls_found': list(urls)
-            })
+        if not crypto_matches:
+            continue
+
+        score, risk_label = score_finding(msg, crypto_matches, dork_tier)
+
+        if score < min_score:
+            continue
+
+        findings.append({
+            'repo':          repo,
+            'commit_sha':    sha,
+            'commit_url':    url,
+            'author':        author,
+            'date':          date,
+            'message':       msg[:500],
+            'crypto_matches': crypto_matches,
+            'urls_found':    list(urls),
+            'confidence':    score,
+            'risk_label':    risk_label,
+        })
 
     return findings, urls
 
 
-def generate_crypto_dorks(keyword=None):
-    dorks = list(CRYPTO_DORK_TEMPLATES)
-    if keyword:
-        dorks.extend([
-            f'"{keyword}" private key',
-            f'"{keyword}" mnemonic',
-            f'"{keyword}" wallet',
-            f'"{keyword}" .env',
-            f'"{keyword}" secret',
-            f'"{keyword}" api key',
-            f'"{keyword}" deployer',
-        ])
-    return dorks
-
-
 # ---------------------------------------------------------------------------
-# Main search runner (supports a progress_callback for web streaming)
+# Main search runner
 # ---------------------------------------------------------------------------
 
 def run_crypto_search(keyword=None, output_dir='./crypto_output',
-                      rate_limit=5.0, progress_callback=None):
+                      rate_limit=5.0, min_score=65,
+                      include_low_dorks=False, progress_callback=None):
     os.makedirs(output_dir, exist_ok=True)
 
-    def log(msg, level='info'):
-        if level == 'info':
-            logger.info(msg)
-        elif level == 'warning':
-            logger.warning(msg)
-        elif level == 'error':
-            logger.error(msg)
+    def log(msg, level='info', **extra):
+        getattr(logger, level, logger.info)(msg)
         if progress_callback:
-            progress_callback({'level': level, 'message': msg})
+            progress_callback({'level': level, 'message': msg, **extra})
 
     rotator.reload()
     log("=" * 60)
-    log("CRYPTO COMMIT SEARCH TOOL")
-    log(f"Target keyword: {keyword if keyword else 'all crypto patterns'}")
-    log(f"Active tokens: {rotator.count()}")
+    log("CRYPTO COMMIT SCANNER  v2.0")
+    log(f"Keyword   : {keyword or '(all crypto patterns)'}")
+    log(f"Min score : {min_score}/100")
+    log(f"Tokens    : {rotator.count()}")
     log("=" * 60)
 
     if rotator.count() == 0:
-        log("WARNING: No GITHUB_TOKEN found! Rate limit will be very low (60 req/hr)", 'warning')
+        log("WARNING: No GITHUB_TOKEN — rate limited to 60 req/hr", 'warning')
 
-    dorks = generate_crypto_dorks(keyword)
-    log(f"Generated {len(dorks)} search queries")
+    dorks = get_ordered_dorks(keyword, include_low=include_low_dorks)
+    log(f"Search queries: {len(dorks)} (CRITICAL first)")
 
-    all_urls = set()
-    all_findings = []
-    processed_dorks = set()
+    all_findings, all_urls = [], set()
+    seen_shas = set()
 
-    for i, dork in enumerate(dorks, 1):
-        if dork in processed_dorks:
-            continue
-        processed_dorks.add(dork)
+    for i, (tier, dork) in enumerate(dorks, 1):
+        log(f'[{i}/{len(dorks)}] [{tier}] "{dork[:60]}"')
 
-        log(f'[{i}/{len(dorks)}] Searching: "{dork[:60]}"')
+        data = query_commits(dork)
+        total = data.get('total_count', 0)
 
-        commit_data = query_commits(dork)
-        if commit_data.get('total_count', 0) == 0:
-            log(f'  No results found')
-            time.sleep(rate_limit)
+        if total == 0:
+            log(f'  → No commits found')
+            time.sleep(rate_limit * 0.5)
             continue
 
-        findings, urls = extract_crypto_from_commit(commit_data, keyword)
-        new_findings = [f for f in findings if f not in all_findings]
-        new_urls = urls - all_urls
-        all_findings.extend(new_findings)
+        findings, urls = extract_findings(data, keyword,
+                                          dork_tier=tier, min_score=min_score)
+
+        new = [f for f in findings if f['commit_sha'] not in seen_shas]
+        for f in new:
+            seen_shas.add(f['commit_sha'])
+
+        all_findings.extend(new)
         all_urls.update(urls)
 
-        log(f'  Commits: {commit_data["total_count"]} | New findings: {len(new_findings)} | '
-            f'New URLs: {len(new_urls)} | Total: {len(all_findings)}')
+        passed_pct = f'{(len(new)/max(total,1)*100):.0f}%' if total else '0%'
+        log(f'  → {total} commits | {len(new)} passed filter ({passed_pct}) | '
+            f'total: {len(all_findings)}')
 
-        for finding in new_findings[:2]:
-            log(f'    [!] {finding["repo"]} - {finding["commit_sha"][:8]}')
-            if finding['crypto_matches']:
-                matches_str = ', '.join([m['type'] for m in finding['crypto_matches'][:3]])
-                log(f'        Patterns: {matches_str}')
+        for f in new[:2]:
+            stars = '⭐' * (f['confidence'] // 25)
+            log(f'    [{f["risk_label"]}][{f["confidence"]}] {f["repo"]} '
+                f'— {", ".join(m["type"] for m in f["crypto_matches"][:3])} {stars}')
 
         time.sleep(rate_limit)
 
-    # Save outputs
-    urls_file = f'{output_dir}/crypto_commit_urls.txt'
-    findings_file = f'{output_dir}/crypto_commit_findings.json'
-    report_file = f'{output_dir}/crypto_report.txt'
+    # Sort by confidence descending
+    all_findings.sort(key=lambda x: -x['confidence'])
 
-    with open(urls_file, 'w') as f:
+    # ── Stats
+    total_f = len(all_findings)
+    high_quality = [f for f in all_findings
+                    if f['risk_label'] in ('CRITICAL', 'HIGH')]
+    pct = (len(high_quality) / total_f * 100) if total_f else 0
+
+    log("=" * 60)
+    log(f"SCAN COMPLETE")
+    log(f"  Total findings : {total_f}")
+    log(f"  CRITICAL+HIGH  : {len(high_quality)} ({pct:.0f}%)")
+    log(f"  Total URLs     : {len(all_urls)}")
+    log("=" * 60)
+
+    # ── Write outputs
+    with open(f'{output_dir}/crypto_commit_urls.txt', 'w') as f:
         f.write('\n'.join(sorted(all_urls)))
 
-    with open(findings_file, 'w') as f:
+    with open(f'{output_dir}/crypto_commit_findings.json', 'w') as f:
         json.dump(all_findings, f, indent=2)
 
-    with open(report_file, 'w') as f:
-        f.write("CRYPTO COMMIT SEARCH REPORT\n")
+    with open(f'{output_dir}/crypto_report.txt', 'w') as f:
+        f.write("CRYPTO COMMIT SCANNER — REPORT\n")
         f.write("=" * 60 + "\n\n")
-        f.write(f"Search keyword: {keyword if keyword else 'all crypto patterns'}\n")
-        f.write(f"Total findings: {len(all_findings)}\n")
-        f.write(f"Total unique URLs: {len(all_urls)}\n\n")
-        f.write("HIGH RISK FINDINGS:\n")
-        f.write("-" * 50 + "\n")
-        for finding in all_findings:
-            has_high_risk = any(m['type'] in ['eth_private_key', 'btc_wif', 'btc_wif_compressed',
-                                              'mnemonic_12', 'mnemonic_24', 'pem_key']
-                               for m in finding['crypto_matches'])
-            if has_high_risk:
-                f.write(f"\n[{finding['repo']}] - {finding['commit_url']}\n")
-                f.write(f"Author: {finding['author']} | Date: {finding['date']}\n")
-                f.write(f"Message: {finding['message'][:200]}\n")
-                for match in finding['crypto_matches']:
-                    if match['type'] in ['eth_private_key', 'btc_wif', 'mnemonic_12', 'mnemonic_24']:
-                        f.write(f"CRITICAL: {match['type']} detected\n")
+        f.write(f"Keyword : {keyword or 'all patterns'}\n")
+        f.write(f"Findings: {total_f} (CRITICAL+HIGH: {len(high_quality)}, {pct:.0f}%)\n")
+        f.write(f"URLs    : {len(all_urls)}\n\n")
 
-        f.write("\n\nALL FINDINGS:\n")
-        f.write("-" * 50 + "\n")
-        for finding in all_findings:
-            f.write(f"\n- {finding['repo']}\n")
-            f.write(f"  Commit: {finding['commit_url']}\n")
-            f.write(f"  Patterns: {', '.join([m['type'] for m in finding['crypto_matches']])}\n")
-
-    log("=" * 60)
-    log(f"DONE — {len(all_findings)} findings saved to {output_dir}")
-    log("=" * 60)
+        for risk in ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW'):
+            group = [x for x in all_findings if x['risk_label'] == risk]
+            if not group:
+                continue
+            f.write(f"\n{'─'*50}\n[{risk}] — {len(group)} findings\n{'─'*50}\n")
+            for finding in group:
+                f.write(f"\n  Repo   : {finding['repo']}\n")
+                f.write(f"  URL    : {finding['commit_url']}\n")
+                f.write(f"  Author : {finding['author']}  |  {finding['date']}\n")
+                f.write(f"  Score  : {finding['confidence']}/100\n")
+                f.write(f"  Patterns: {', '.join(m['type'] for m in finding['crypto_matches'])}\n")
+                f.write(f"  Message: {finding['message'][:200]}\n")
 
     if progress_callback:
-        progress_callback({'level': 'done', 'message': 'Search complete',
-                           'findings_count': len(all_findings),
-                           'urls_count': len(all_urls)})
+        progress_callback({
+            'level': 'done', 'message': 'Search complete',
+            'findings_count': total_f, 'urls_count': len(all_urls),
+            'high_quality_count': len(high_quality), 'quality_pct': round(pct),
+        })
 
     return all_urls, all_findings
 
 
 # ---------------------------------------------------------------------------
-# CLI entry point
+# CLI
 # ---------------------------------------------------------------------------
 
 if __name__ == '__main__':
@@ -392,14 +559,8 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO,
                         format='%(asctime)s %(levelname)s %(message)s',
                         datefmt='%H:%M:%S')
-
-    print("\n" + "=" * 60)
-    print("CRYPTO COMMIT SEARCH TOOL")
-    print("=" * 60 + "\n")
-
     keyword = sys.argv[1] if len(sys.argv) > 1 else None
     if not keyword:
-        keyword = input("Keyword/project/domain (Enter = all patterns): ").strip() or None
-
+        keyword = input("Keyword (Enter = all patterns): ").strip() or None
     output_dir = sys.argv[2] if len(sys.argv) > 2 else './crypto_output'
-    run_crypto_search(keyword=keyword, output_dir=output_dir, rate_limit=5.0)
+    run_crypto_search(keyword=keyword, output_dir=output_dir)
