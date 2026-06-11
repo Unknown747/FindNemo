@@ -166,6 +166,16 @@ def reload_tokens():
     return jsonify({'ok': True, 'count': rotator.count(), 'tokens': rotator.status()})
 
 
+@app.route('/api/tokens/add', methods=['POST'])
+def add_token():
+    data  = request.get_json() or {}
+    token = (data.get('token') or '').strip()
+    if not token:
+        return jsonify({'ok': False, 'error': 'Token is empty.'}), 400
+    added = rotator.add_token(token)
+    return jsonify({'ok': True, 'added': added, 'count': rotator.count(), 'tokens': rotator.status()})
+
+
 # ── Downloads ────────────────────────────────────────────────────────────────
 
 @app.route('/download/<path:filename>')

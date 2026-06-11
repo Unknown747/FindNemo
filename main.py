@@ -72,6 +72,18 @@ class TokenRotator:
         with self._lock:
             self._load()
 
+    def add_token(self, token: str) -> bool:
+        """Add a token at runtime. Returns True if it was new, False if duplicate."""
+        token = token.strip()
+        if not token:
+            return False
+        with self._lock:
+            existing = {t for t in self._tokens}
+            if token in existing:
+                return False
+            self._tokens.append(token)
+            return True
+
     def count(self):
         return len(self._tokens)
 

@@ -204,10 +204,12 @@
           <div class="empty" style="padding:8px">No tokens loaded</div>
         </div>
         <div class="add-token-row" style="margin-top:8px">
-          <input type="text" id="new-token" placeholder="ghp_xxxxxxxxxxxx" autocomplete="off" />
-          <button class="btn btn-primary btn-sm" onclick="addTokenHelp()">?</button>
+          <input type="text" id="new-token" placeholder="ghp_xxxxxxxxxxxx" autocomplete="off"
+                 onkeydown="if(event.key==='Enter') addToken()" />
+          <button class="btn btn-primary btn-sm" id="btn-add-token" onclick="addToken()">+ Add</button>
         </div>
-        <div class="btn-row" style="margin-top:8px">
+        <div id="add-token-msg" style="font-size:11px;margin-top:5px;min-height:16px"></div>
+        <div class="btn-row" style="margin-top:4px">
           <button class="btn btn-subtle btn-sm" onclick="reloadTokens()">↺ Reload from ENV</button>
         </div>
       </div>
@@ -607,8 +609,45 @@
     appendLog('info', `Tokens reloaded — ${d.count} active.`);
   }
 
-  function addTokenHelp() {
-    appendLog('info', 'Go to Replit Secrets → add GITHUB_TOKEN_1, GITHUB_TOKEN_2, … then click "Reload from ENV".');
+  async function addToken() {
+    const input = document.getElementById('new-token');
+    const msg   = document.getElementById('add-token-msg');
+    const btn   = document.getElementById('btn-add-token');
+    const token = input.value.trim();
+    if (!token) {
+      msg.style.color = 'var(--yellow)';
+      msg.textContent = 'Paste a GitHub token first.';
+      return;
+    }
+    btn.disabled = true;
+    msg.style.color = 'var(--muted)';
+    msg.textContent = 'Adding…';
+    try {
+      const d = await (await fetch('/api/tokens/add', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({token})
+      })).json();
+      if (!d.ok) {
+        msg.style.color = 'var(--red)';
+        msg.textContent = d.error || 'Failed to add token.';
+      } else if (!d.added) {
+        msg.style.color = 'var(--yellow)';
+        msg.textContent = 'Token already in rotation.';
+      } else {
+        msg.style.color = 'var(--green)';
+        msg.textContent = `✓ Added! Now ${d.count} token(s) active.`;
+        input.value = '';
+        renderTokenList(d.tokens || []);
+        appendLog('info', `Token added — ${d.count} total in rotation.`);
+        document.getElementById('stat-tokens').textContent = d.count;
+      }
+    } catch(e) {
+      msg.style.color = 'var(--red)';
+      msg.textContent = 'Request failed.';
+    }
+    btn.disabled = false;
+    setTimeout(() => { msg.textContent = ''; }, 3500);
   }
 
   // ── Init ──────────────────────────────────────────────────────────────────
