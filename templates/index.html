@@ -593,14 +593,40 @@
       list.innerHTML = '<div class="empty" style="padding:8px">No tokens — add via Replit Secrets</div>';
       return;
     }
-    list.innerHTML = tokens.map(t => `
+    list.innerHTML = tokens.map(t => {
+      const suffix = t.token.replace('...','');
+      const removeBtn = t.available
+        ? `<button class="btn btn-danger btn-sm" style="padding:2px 7px;font-size:10px;line-height:1"
+             onclick="removeToken('${suffix}',this)" title="Remove token">✕</button>`
+        : `<span style="font-size:10px;color:var(--yellow);opacity:.6" title="Cannot remove while rate-limited">🔒</span>`;
+      return `
       <div class="token-item">
         <div class="dot ${t.available?'dot-ok':'dot-wait'}"></div>
         <span class="lbl">${esc(t.token)}</span>
         <span style="font-size:11px;color:${t.available?'var(--green)':'var(--yellow)'}">
           ${t.available?'Ready':'Rate-limited'}
         </span>
-      </div>`).join('');
+        ${removeBtn}
+      </div>`;
+    }).join('');
+  }
+
+  async function removeToken(suffix, btn) {
+    if (!confirm(`Remove token ...${suffix}?`)) return;
+    btn.disabled = true;
+    const d = await (await fetch('/api/tokens/remove', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({suffix})
+    })).json();
+    if (d.removed) {
+      renderTokenList(d.tokens || []);
+      document.getElementById('stat-tokens').textContent = d.count;
+      appendLog('info', `Token ...${suffix} removed. ${d.count} remaining.`);
+    } else {
+      btn.disabled = false;
+      appendLog('warning', `Could not remove token ...${suffix} (may be rate-limited).`);
+    }
   }
 
   async function reloadTokens() {

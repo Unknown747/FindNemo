@@ -176,6 +176,16 @@ def add_token():
     return jsonify({'ok': True, 'added': added, 'count': rotator.count(), 'tokens': rotator.status()})
 
 
+@app.route('/api/tokens/remove', methods=['POST'])
+def remove_token():
+    data   = request.get_json() or {}
+    suffix = (data.get('suffix') or '').strip()
+    if not suffix:
+        return jsonify({'ok': False, 'error': 'Token suffix required.'}), 400
+    removed = rotator.remove_token(suffix)
+    return jsonify({'ok': True, 'removed': removed, 'count': rotator.count(), 'tokens': rotator.status()})
+
+
 # ── Downloads ────────────────────────────────────────────────────────────────
 
 @app.route('/download/<path:filename>')

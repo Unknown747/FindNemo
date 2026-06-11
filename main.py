@@ -84,6 +84,21 @@ class TokenRotator:
             self._tokens.append(token)
             return True
 
+    def remove_token(self, token_suffix: str) -> bool:
+        """Remove a token by its last-6-char suffix. Only removes if NOT rate-limited."""
+        now = time.time()
+        with self._lock:
+            for t in self._tokens:
+                if t.endswith(token_suffix):
+                    if now < self._reset_at.get(t, 0):
+                        return False  # rate-limited — refuse removal
+                    self._tokens.remove(t)
+                    self._reset_at.pop(t, None)
+                    if self._index >= len(self._tokens) and self._tokens:
+                        self._index = 0
+                    return True
+        return False
+
     def count(self):
         return len(self._tokens)
 
