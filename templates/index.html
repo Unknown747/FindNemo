@@ -243,6 +243,20 @@
 
         <!-- THIS SCAN findings -->
         <div class="panel" id="panel-findings">
+          <div id="scan-toolbar" style="display:none;margin-bottom:10px">
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <input type="text" id="scan-search" placeholder="Filter repo, type, message…"
+                     style="flex:1;min-width:140px" oninput="renderFindings()" />
+              <div class="vault-risk-pills" id="scan-type-pills">
+                <span class="risk-pill all active" onclick="setScanType('all',this)">All</span>
+                <span class="risk-pill crit"        onclick="setScanType('privkey',this)">Private Key</span>
+                <span class="risk-pill high"         onclick="setScanType('mnemonic',this)">Mnemonic</span>
+                <span class="risk-pill medium"       onclick="setScanType('apikey',this)">API Key</span>
+                <span class="risk-pill all"          onclick="setScanType('file',this)" style="background:#1a2a1a;color:var(--green);border-color:#1a2a1a">FILE</span>
+                <span class="risk-pill all"          onclick="setScanType('commit',this)" style="background:#1a1a2a;color:var(--blue);border-color:#1a1a2a">COMMIT</span>
+              </div>
+            </div>
+          </div>
           <div id="audit-bar" class="audit-bar" style="display:none">
             <span class="ab-label">Quality</span>
             <div class="quality-track"><div class="quality-fill" id="quality-fill"></div></div>
@@ -284,12 +298,18 @@
 </div>
 
 <script>
-  let evtSource       = null;
-  let _reconnectTimer = null;
-  let _reconnectDelay = 1500;
-  let _searchDone     = false;
-  let _vaultEntries   = [];
-  let _vaultFilter    = 'all';
+  let evtSource        = null;
+  let _reconnectTimer  = null;
+  let _reconnectDelay  = 1500;
+  let _searchDone      = false;
+  let _vaultEntries    = [];
+  let _vaultFilter     = 'all';
+  let _scanFindings    = [];
+  let _scanTypeFilter  = 'all';
+
+  const _PRIVKEY_TYPES  = new Set(['eth_private_key','btc_wif','btc_wif_compressed','raw_hex_key','env_private_key','pem_private_key']);
+  const _MNEMONIC_TYPES = new Set(['mnemonic_12','mnemonic_24','env_mnemonic']);
+  const _APIKEY_TYPES   = new Set(['infura_secret','alchemy_key']);
 
   // ── Tabs ──────────────────────────────────────────────────────────────────
   function showTab(n) {
@@ -440,29 +460,52 @@
   }
 
   // ── This-scan findings ────────────────────────────────────────────────────
-  async function fetchFindings() {
-    const findings = await (await fetch('/api/findings')).json();
-    document.getElementById('stat-findings').textContent = findings.length;
-    const hq = findings.filter(f => ['CRITICAL','HIGH'].includes(f.risk_label));
-    document.getElementById('stat-high').textContent = hq.length;
-    const pct = findings.length ? Math.round(hq.length / findings.length * 100) : 0;
-    showQuality(pct, hq.length);
+  function setScanType(type, el) {
+    _scanTypeFilter = type;
+    document.querySelectorAll('#scan-type-pills .risk-pill').forEach(p => p.classList.remove('active'));
+    el.classList.add('active');
+    renderFindings();
+  }
 
-    const ab = document.getElementById('audit-bar');
-    if (findings.length) {
-      ab.style.display = 'flex';
-      const fill = document.getElementById('quality-fill');
-      fill.style.width = pct + '%';
-      fill.style.background = pct >= 80 ? 'var(--green)' : pct >= 60 ? 'var(--yellow)' : 'var(--red)';
-      document.getElementById('audit-pct-label').textContent = pct + '%';
+  function _findingMatchesType(f, type) {
+    if (type === 'all')    return true;
+    if (type === 'file')   return f.source === 'code';
+    if (type === 'commit') return f.source !== 'code';
+    const types = (f.crypto_matches || []).map(m => m.type);
+    if (type === 'privkey')  return types.some(t => _PRIVKEY_TYPES.has(t));
+    if (type === 'mnemonic') return types.some(t => _MNEMONIC_TYPES.has(t));
+    if (type === 'apikey')   return types.some(t => _APIKEY_TYPES.has(t));
+    return true;
+  }
+
+  function renderFindings() {
+    const q    = (document.getElementById('scan-search')?.value || '').toLowerCase();
+    const wrap = document.getElementById('findings-wrap');
+
+    let findings = _scanFindings;
+
+    // Type filter
+    if (_scanTypeFilter !== 'all') {
+      findings = findings.filter(f => _findingMatchesType(f, _scanTypeFilter));
     }
 
-    const wrap = document.getElementById('findings-wrap');
+    // Text search
+    if (q) {
+      findings = findings.filter(f =>
+        (f.repo    || '').toLowerCase().includes(q) ||
+        (f.message || '').toLowerCase().includes(q) ||
+        (f.author  || '').toLowerCase().includes(q) ||
+        (f.crypto_matches || []).some(m => m.type.toLowerCase().includes(q))
+      );
+    }
+
     if (!findings.length) {
-      wrap.innerHTML = '<div class="empty">No findings passed the confidence threshold.</div>';
+      wrap.innerHTML = _scanFindings.length
+        ? '<div class="empty">No findings match the current filter.</div>'
+        : '<div class="empty">No findings passed the confidence threshold.</div>';
       return;
     }
-    const HIGH_TYPES = ['eth_private_key','btc_wif','btc_wif_compressed','mnemonic_12','mnemonic_24','pem_private_key','raw_hex_key','env_mnemonic','env_private_key'];
+
     wrap.innerHTML = findings.map(f => {
       const rl = f.risk_label || 'MEDIUM';
       const cls = rl==='CRITICAL'?'critical':rl==='HIGH'?'high':'medium';
@@ -475,15 +518,13 @@
         ? `<code style="color:var(--yellow);font-size:11px;margin-left:4px">${esc(f.file_path)}</code>`
         : '';
       const tags = (f.crypto_matches||[]).map(m => {
-        const tc = HIGH_TYPES.includes(m.type) ? (m.tier||'CRITICAL') : '';
+        const isCrit = _PRIVKEY_TYPES.has(m.type) || _MNEMONIC_TYPES.has(m.type);
+        const tc = isCrit ? (m.tier||'CRITICAL') : '';
         return `<span class="tag ${tc}">${esc(m.type)}</span>`;
       }).join('');
       const msgDisplay = isCode
         ? esc((f.message||'').replace(/^\[FILE:.*?\]\n?/,'').slice(0,280))
         : esc((f.message||'').slice(0,280));
-      const metaLine = isCode
-        ? `${esc(f.repo)} ${fileBadge}`
-        : `${esc(f.author)} · ${esc(f.date)} · <code>${esc((f.commit_sha||'').slice(0,8))}</code>`;
       return `<div class="finding ${cls}">
         <div class="finding-header">
           <div class="f-repo">${sourceBadge} <a href="${esc(f.commit_url)}" target="_blank" style="color:inherit;text-decoration:none">${esc(f.repo)}</a>${fileBadge}</div>
@@ -494,6 +535,29 @@
         <div class="f-tags">${tags}</div>
       </div>`;
     }).join('');
+  }
+
+  async function fetchFindings() {
+    const findings = await (await fetch('/api/findings')).json();
+    _scanFindings = findings;
+
+    document.getElementById('stat-findings').textContent = findings.length;
+    const hq = findings.filter(f => ['CRITICAL','HIGH'].includes(f.risk_label));
+    document.getElementById('stat-high').textContent = hq.length;
+    const pct = findings.length ? Math.round(hq.length / findings.length * 100) : 0;
+    showQuality(pct, hq.length);
+
+    if (findings.length) {
+      const ab = document.getElementById('audit-bar');
+      ab.style.display = 'flex';
+      const fill = document.getElementById('quality-fill');
+      fill.style.width = pct + '%';
+      fill.style.background = pct >= 80 ? 'var(--green)' : pct >= 60 ? 'var(--yellow)' : 'var(--red)';
+      document.getElementById('audit-pct-label').textContent = pct + '%';
+      document.getElementById('scan-toolbar').style.display = 'block';
+    }
+
+    renderFindings();
   }
 
   // ── Vault ─────────────────────────────────────────────────────────────────
