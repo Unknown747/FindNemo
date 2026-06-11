@@ -564,8 +564,8 @@
         : esc((f.message||'').slice(0,280));
       const fHelioMatches = (f.crypto_matches||[]).filter(m => _HELIO_TYPES.has(m.type));
       const fHelioBtn = fHelioMatches.length
-        ? `<button class="btn-helio" style="padding:4px 12px;font-size:11px;margin-top:6px;display:inline-flex;align-items:center;gap:5px"
-             onclick="openInHelio(${JSON.stringify(fHelioMatches[0].match||'')},${JSON.stringify(fHelioMatches[0].type)})"
+        ? `<button class="btn-helio btn-helio-action" style="padding:4px 12px;font-size:11px;margin-top:6px;display:inline-flex;align-items:center;gap:5px"
+             data-secret="${esc(fHelioMatches[0].match||'')}" data-type="${esc(fHelioMatches[0].type)}"
              title="Copy secret & buka Helio Wallet">🔑 Buka di Helio Wallet</button>`
         : '';
       return `<div class="finding ${cls}">
@@ -673,7 +673,7 @@
         : '';
       const isWalletType = _HELIO_TYPES.has(e.type);
       const helioBtn = isWalletType
-        ? `<button class="btn-helio" style="padding:4px 12px;font-size:11px;margin-top:6px;display:inline-flex;align-items:center;gap:5px" onclick="openInHelio(${JSON.stringify(e.secret||'')},${JSON.stringify(e.type)})" title="Copy secret & buka Helio Wallet">🔑 Buka di Helio Wallet</button>`
+        ? `<button class="btn-helio btn-helio-action" style="padding:4px 12px;font-size:11px;margin-top:6px;display:inline-flex;align-items:center;gap:5px" data-secret="${esc(e.secret||'')}" data-type="${esc(e.type)}" title="Copy secret & buka Helio Wallet">🔑 Buka di Helio Wallet</button>`
         : '';
       return `<div class="vault-entry ${cls}">
         <div class="vault-header">
@@ -896,6 +896,15 @@
     btn.disabled = false;
     setTimeout(() => { msg.textContent = ''; }, 3500);
   }
+
+  // ── Helio button event delegation (avoids quote-escaping issues in innerHTML) ──
+  document.addEventListener('click', function(e) {
+    const btn = e.target.closest('.btn-helio-action');
+    if (!btn) return;
+    const secret = btn.dataset.secret;
+    const type   = btn.dataset.type;
+    if (secret) openInHelio(secret, type);
+  });
 
   // ── Init ──────────────────────────────────────────────────────────────────
   fetchStatus();
