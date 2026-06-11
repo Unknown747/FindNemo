@@ -656,8 +656,21 @@ def _save_to_vault(finding, total_new_db, total_dup_db, log, progress_callback):
 
 def run_crypto_search(keyword=None, output_dir='./crypto_output',
                       rate_limit=5.0, min_score=65,
-                      include_low_dorks=False, progress_callback=None):
+                      include_low_dorks=False, progress_callback=None,
+                      stop_check=None):
     os.makedirs(output_dir, exist_ok=True)
+
+    def _should_stop():
+        return stop_check is not None and stop_check()
+
+    def _interruptible_sleep(seconds):
+        """Sleep in small chunks so stop_check is polled frequently."""
+        end = time.time() + seconds
+        while time.time() < end:
+            if _should_stop():
+                return True
+            time.sleep(min(0.5, end - time.time()))
+        return False
 
     def log(msg, level='info', **extra):
         getattr(logger, level, logger.info)(msg)
@@ -693,11 +706,17 @@ def run_crypto_search(keyword=None, output_dir='./crypto_output',
 
     log(f"[PHASE 1] Code search — {len(code_dorks)} queries targeting file contents")
     for i, (dork, tier) in enumerate(code_dorks, 1):
+        if _should_stop():
+            log('⏹ Scan stopped by user.', 'warning')
+            break
+
         log(f'  [{i}/{len(code_dorks)}] [{tier}] {dork[:70]}')
         items = query_code(dork)
         if not items:
             log(f'    → 0 files found')
-            time.sleep(rate_limit * 0.4)
+            if _interruptible_sleep(rate_limit * 0.4):
+                log('⏹ Scan stopped by user.', 'warning')
+                break
             continue
 
         findings = extract_code_findings(items, dork_tier=tier, min_score=min_score)
@@ -717,13 +736,19 @@ def run_crypto_search(keyword=None, output_dir='./crypto_output',
                 f'— {", ".join(m["type"] for m in f["crypto_matches"][:2])}')
 
         # GitHub Code Search API: max 10 req/min with auth = min 6s between requests
-        time.sleep(max(rate_limit, 6.0))
+        if _interruptible_sleep(max(rate_limit, 6.0)):
+            log('⏹ Scan stopped by user.', 'warning')
+            break
 
     # ── PHASE 2: Commit message search ──────────────────────────────────────
     dorks = get_ordered_dorks(keyword, include_low=include_low_dorks)
     log(f"[PHASE 2] Commit search — {len(dorks)} queries on commit messages")
 
     for i, (tier, dork) in enumerate(dorks, 1):
+        if _should_stop():
+            log('⏹ Scan stopped by user.', 'warning')
+            break
+
         log(f'  [{i}/{len(dorks)}] [{tier}] "{dork[:60]}"')
 
         data = query_commits(dork)
@@ -731,7 +756,9 @@ def run_crypto_search(keyword=None, output_dir='./crypto_output',
 
         if total == 0:
             log(f'    → No commits found')
-            time.sleep(rate_limit * 0.5)
+            if _interruptible_sleep(rate_limit * 0.5):
+                log('⏹ Scan stopped by user.', 'warning')
+                break
             continue
 
         findings, urls = extract_findings(data, keyword,
@@ -753,7 +780,9 @@ def run_crypto_search(keyword=None, output_dir='./crypto_output',
             log(f'    [{f["risk_label"]}][{f["confidence"]}] {f["repo"]} '
                 f'— {", ".join(m["type"] for m in f["crypto_matches"][:3])}')
 
-        time.sleep(rate_limit)
+        if _interruptible_sleep(rate_limit):
+            log('⏹ Scan stopped by user.', 'warning')
+            break
 
     # Sort by confidence descending
     all_findings.sort(key=lambda x: -x['confidence'])

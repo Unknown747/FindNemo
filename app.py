@@ -9,27 +9,29 @@ app = Flask(__name__, template_folder='templates')
 # Job store
 # ---------------------------------------------------------------------------
 _job = {
-    'running':      False,
-    'queue':        queue.Queue(),
-    'findings':     [],
-    'urls_count':   0,
-    'quality_pct':  0,
-    'high_quality': 0,
-    'new_secrets':  0,
-    'dup_secrets':  0,
-    'error':        None,
+    'running':         False,
+    'stop_requested':  False,
+    'queue':           queue.Queue(),
+    'findings':        [],
+    'urls_count':      0,
+    'quality_pct':     0,
+    'high_quality':    0,
+    'new_secrets':     0,
+    'dup_secrets':     0,
+    'error':           None,
 }
 
 
 def _run_job(keyword, rate_limit, min_score):
-    _job['running']      = True
-    _job['findings']     = []
-    _job['urls_count']   = 0
-    _job['quality_pct']  = 0
-    _job['high_quality'] = 0
-    _job['new_secrets']  = 0
-    _job['dup_secrets']  = 0
-    _job['error']        = None
+    _job['running']        = True
+    _job['stop_requested'] = False
+    _job['findings']       = []
+    _job['urls_count']     = 0
+    _job['quality_pct']    = 0
+    _job['high_quality']   = 0
+    _job['new_secrets']    = 0
+    _job['dup_secrets']    = 0
+    _job['error']          = None
 
     def on_progress(event):
         _job['queue'].put(event)
@@ -40,7 +42,10 @@ def _run_job(keyword, rate_limit, min_score):
             _job['new_secrets']  = event.get('new_secrets', 0)
             _job['dup_secrets']  = event.get('dup_secrets', 0)
         if event.get('level') == 'vault':
-            _job['queue'].put(event)   # forward live vault updates to browser
+            _job['queue'].put(event)
+
+    def stop_check():
+        return _job['stop_requested']
 
     try:
         _, findings = run_crypto_search(
@@ -49,6 +54,7 @@ def _run_job(keyword, rate_limit, min_score):
             rate_limit=rate_limit,
             min_score=min_score,
             progress_callback=on_progress,
+            stop_check=stop_check,
         )
         _job['findings'] = findings
     except Exception as e:
@@ -59,7 +65,8 @@ def _run_job(keyword, rate_limit, min_score):
                            'high_quality_count': 0, 'quality_pct': 0,
                            'new_secrets': 0, 'dup_secrets': 0})
     finally:
-        _job['running'] = False
+        _job['running']        = False
+        _job['stop_requested'] = False
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +76,14 @@ def _run_job(keyword, rate_limit, min_score):
 @app.route('/')
 def index():
     return render_template('index.html')
+
+
+@app.route('/api/stop', methods=['POST'])
+def stop_search():
+    if not _job['running']:
+        return jsonify({'ok': False, 'error': 'No scan running.'}), 400
+    _job['stop_requested'] = True
+    return jsonify({'ok': True})
 
 
 @app.route('/api/start', methods=['POST'])

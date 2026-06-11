@@ -201,6 +201,7 @@
 
         <div class="btn-row">
           <button class="btn btn-primary" id="btn-start" onclick="startSearch()">▶ Start Search</button>
+          <button class="btn btn-danger"  id="btn-stop"  onclick="stopSearch()" style="display:none">⏹ Stop</button>
           <button class="btn btn-subtle" onclick="clearLog()">Clear</button>
         </div>
       </div>
@@ -346,13 +347,16 @@
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
-  // ── Start Search ──────────────────────────────────────────────────────────
+  // ── Start / Stop Search ───────────────────────────────────────────────────
+  function _setSearchButtons(running) {
+    document.getElementById('btn-start').disabled = running;
+    document.getElementById('btn-stop').style.display = running ? '' : 'none';
+  }
+
   async function startSearch() {
     const keyword   = document.getElementById('keyword').value.trim();
     const rateLimit = parseInt(document.getElementById('rate-limit').value);
     const minScore  = parseInt(document.getElementById('min-score').value);
-    const btn = document.getElementById('btn-start');
-    btn.disabled = true;
     _searchDone = false;
     _reconnectDelay = 1500;
     clearTimeout(_reconnectTimer);
@@ -360,6 +364,7 @@
     appendLog('info', `Starting scan… (min confidence: ${minScore})`);
     setStatus('running');
     startProgress();
+    _setSearchButtons(true);
 
     const res = await fetch('/api/start', {
       method: 'POST',
@@ -369,10 +374,20 @@
     if (!res.ok) {
       const e = await res.json();
       appendLog('error', e.error || 'Failed to start.');
-      setStatus('idle'); stopProgress(); btn.disabled = false;
+      setStatus('idle'); stopProgress(); _setSearchButtons(false);
       return;
     }
     connectStream();
+  }
+
+  async function stopSearch() {
+    const btn = document.getElementById('btn-stop');
+    btn.disabled = true;
+    btn.textContent = '⏳ Stopping…';
+    appendLog('warning', 'Stop requested — finishing current query…');
+    try {
+      await fetch('/api/stop', { method: 'POST' });
+    } catch (_) {}
   }
 
   // ── SSE with auto-reconnect ───────────────────────────────────────────────
@@ -400,7 +415,10 @@
         evtSource.close(); evtSource = null;
         clearTimeout(_reconnectTimer);
         setStatus('done'); stopProgress();
-        document.getElementById('btn-start').disabled = false;
+        _setSearchButtons(false);
+        const stopBtn = document.getElementById('btn-stop');
+        stopBtn.disabled = false;
+        stopBtn.textContent = '⏹ Stop';
         fetchFindings(); fetchStatus();
         loadVault();
         document.getElementById('dl-row').style.display = 'flex';
@@ -416,7 +434,10 @@
         if (!st.running) {
           _searchDone = true;
           setStatus('done'); stopProgress();
-          document.getElementById('btn-start').disabled = false;
+          _setSearchButtons(false);
+          const stopBtn = document.getElementById('btn-stop');
+          stopBtn.disabled = false;
+          stopBtn.textContent = '⏹ Stop';
           fetchFindings(); fetchStatus(); loadVault();
           document.getElementById('dl-row').style.display = 'flex';
           return;
