@@ -690,7 +690,10 @@ def run_crypto_search(keyword=None, output_dir='./crypto_output',
     log("=" * 60)
 
     if rotator.count() == 0:
-        log("WARNING: No GITHUB_TOKEN — rate limited to 60 req/hr", 'warning')
+        log("⚠ No GitHub token loaded.", 'warning')
+        log("  Code search (PHASE 1) will return 0 results — GitHub requires", 'warning')
+        log("  authentication for /search/code. Add GITHUB_TOKEN to Replit Secrets", 'warning')
+        log("  then click 'Reload from ENV' in the Token Rotation panel.", 'warning')
 
     all_findings, all_urls = [], set()
     seen_keys     = set()   # commit_sha OR file_url — dedup within this scan
