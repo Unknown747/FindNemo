@@ -143,8 +143,9 @@
     .helio-modal .btn-close-modal { background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:5px; padding:7px 14px; cursor:pointer; font-size:13px; margin-left:auto; }
 
     /* Vault toolbar */
-    .vault-toolbar { display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
-    .vault-toolbar input { flex:1; min-width:140px; }
+    .vault-toolbar { display:flex; flex-direction:column; gap:7px; margin-bottom:10px; }
+    .vault-toolbar-row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+    .vault-toolbar-row input { flex:1; min-width:140px; }
     .vault-risk-pills { display:flex; gap:4px; flex-wrap:wrap; }
     .risk-pill { padding:3px 9px; border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; border:1px solid transparent; transition:all .15s; }
     .risk-pill.all     { background:#1f2937; color:var(--muted); border-color:var(--border); }
@@ -152,6 +153,14 @@
     .risk-pill.high    { background:#2d1e14; color:var(--orange); border-color:#3d2014; }
     .risk-pill.medium  { background:#2d2714; color:var(--yellow); border-color:#3d3014; }
     .risk-pill.active  { outline:2px solid currentColor; }
+    .type-pill { padding:3px 9px; border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; border:1px solid transparent; transition:all .15s; }
+    .type-pill.active  { outline:2px solid currentColor; }
+    .type-pill.tp-all  { background:#1f2937; color:var(--muted); border-color:var(--border); }
+    .type-pill.tp-eth  { background:#0d2040; color:var(--blue); border-color:#1a3060; }
+    .type-pill.tp-mnm  { background:#0d2818; color:var(--green); border-color:#1a3825; }
+    .type-pill.tp-btc  { background:#2a1a05; color:var(--orange); border-color:#3a2a10; }
+    .type-pill.tp-pem  { background:#1e0d2a; color:var(--purple); border-color:#2e1a3a; }
+    .type-pill.tp-api  { background:#2a2005; color:var(--yellow); border-color:#3a3010; }
 
     .audit-bar { background:var(--bg); border:1px solid var(--border); border-radius:5px; padding:8px 14px; font-size:12px; display:flex; align-items:center; gap:10px; margin-bottom:10px; }
     .audit-bar .ab-label { color:var(--muted); white-space:nowrap; }
@@ -289,15 +298,28 @@
         <!-- VAULT -->
         <div class="panel" id="panel-vault">
           <div class="vault-toolbar">
-            <input type="text" id="vault-search" placeholder="Search secret, repo, type…" oninput="renderVault()" />
-            <div class="vault-risk-pills">
-              <span class="risk-pill all active" onclick="setRiskFilter('all',this)">All</span>
-              <span class="risk-pill crit"        onclick="setRiskFilter('CRITICAL',this)">CRITICAL</span>
-              <span class="risk-pill high"         onclick="setRiskFilter('HIGH',this)">HIGH</span>
-              <span class="risk-pill medium"       onclick="setRiskFilter('MEDIUM',this)">MEDIUM</span>
+            <div class="vault-toolbar-row">
+              <input type="text" id="vault-search" placeholder="Search secret, repo, type…" oninput="renderVault()" />
+              <button class="btn btn-subtle btn-sm" onclick="loadVault()">↺</button>
+              <button class="btn btn-danger  btn-sm" onclick="clearVault()">🗑 Clear Vault</button>
             </div>
-            <button class="btn btn-subtle btn-sm" onclick="loadVault()">↺</button>
-            <button class="btn btn-danger  btn-sm" onclick="clearVault()">🗑 Clear Vault</button>
+            <div class="vault-toolbar-row" style="gap:10px">
+              <div id="vault-risk-pills" class="vault-risk-pills">
+                <span class="risk-pill all active" onclick="setRiskFilter('all',this)">All Risk</span>
+                <span class="risk-pill crit"        onclick="setRiskFilter('CRITICAL',this)">CRITICAL</span>
+                <span class="risk-pill high"         onclick="setRiskFilter('HIGH',this)">HIGH</span>
+                <span class="risk-pill medium"       onclick="setRiskFilter('MEDIUM',this)">MEDIUM</span>
+              </div>
+              <div style="width:1px;height:16px;background:var(--border);flex-shrink:0"></div>
+              <div id="vault-type-pills" class="vault-risk-pills">
+                <span class="type-pill tp-all active" onclick="setVaultTypeFilter('all',this)">All Types</span>
+                <span class="type-pill tp-eth"         onclick="setVaultTypeFilter('eth',this)">🔑 ETH Key</span>
+                <span class="type-pill tp-mnm"         onclick="setVaultTypeFilter('mnemonic',this)">📝 Mnemonic</span>
+                <span class="type-pill tp-btc"         onclick="setVaultTypeFilter('btc',this)">₿ BTC WIF</span>
+                <span class="type-pill tp-pem"         onclick="setVaultTypeFilter('pem',this)">🔐 PEM Key</span>
+                <span class="type-pill tp-api"         onclick="setVaultTypeFilter('api',this)">🔗 API Key</span>
+              </div>
+            </div>
           </div>
 
           <div id="vault-dedup-note" style="display:none;font-size:11px;color:var(--purple);margin-bottom:8px;"></div>
@@ -320,6 +342,7 @@
   let _searchDone      = false;
   let _vaultEntries    = [];
   let _vaultFilter     = 'all';
+  let _vaultTypeFilter = 'all';
   let _scanFindings    = [];
   let _scanTypeFilter  = 'all';
 
@@ -327,6 +350,20 @@
   const _MNEMONIC_TYPES = new Set(['mnemonic_12','mnemonic_24','env_mnemonic']);
   const _APIKEY_TYPES   = new Set(['infura_secret','alchemy_key']);
   const _HELIO_TYPES    = new Set([..._PRIVKEY_TYPES, ..._MNEMONIC_TYPES]);
+
+  const _ETH_TYPES = new Set(['eth_private_key','raw_hex_key','env_private_key']);
+  const _BTC_TYPES = new Set(['btc_wif','btc_wif_compressed']);
+  const _PEM_TYPES = new Set(['pem_private_key']);
+
+  function _vaultTypeMatch(e, type) {
+    if (type === 'all')     return true;
+    if (type === 'eth')     return _ETH_TYPES.has(e.type);
+    if (type === 'mnemonic')return _MNEMONIC_TYPES.has(e.type);
+    if (type === 'btc')     return _BTC_TYPES.has(e.type);
+    if (type === 'pem')     return _PEM_TYPES.has(e.type);
+    if (type === 'api')     return _APIKEY_TYPES.has(e.type);
+    return true;
+  }
 
   // ── Tabs ──────────────────────────────────────────────────────────────────
   function showTab(n) {
@@ -630,7 +667,14 @@
 
   function setRiskFilter(risk, el) {
     _vaultFilter = risk;
-    document.querySelectorAll('.risk-pill').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('#vault-risk-pills .risk-pill').forEach(p => p.classList.remove('active'));
+    el.classList.add('active');
+    renderVault();
+  }
+
+  function setVaultTypeFilter(type, el) {
+    _vaultTypeFilter = type;
+    document.querySelectorAll('#vault-type-pills .type-pill').forEach(p => p.classList.remove('active'));
     el.classList.add('active');
     renderVault();
   }
@@ -640,13 +684,16 @@
     const wrap = document.getElementById('vault-wrap');
 
     let entries = _vaultEntries;
-    if (_vaultFilter !== 'all') entries = entries.filter(e => e.risk_label === _vaultFilter);
+    if (_vaultFilter !== 'all')     entries = entries.filter(e => e.risk_label === _vaultFilter);
+    if (_vaultTypeFilter !== 'all') entries = entries.filter(e => _vaultTypeMatch(e, _vaultTypeFilter));
     if (q) entries = entries.filter(e =>
       (e.secret||'').toLowerCase().includes(q) ||
       (e.repo||'').toLowerCase().includes(q)   ||
       (e.type||'').toLowerCase().includes(q)   ||
       (e.author||'').toLowerCase().includes(q)
     );
+
+    _updateTypePillCounts();
 
     if (!entries.length) {
       wrap.innerHTML = `<div class="empty">${_vaultEntries.length ? 'No matches for current filter.' : 'Vault is empty. Run a scan to populate it.'}</div>`;
@@ -684,7 +731,7 @@
           <span class="score-pill ${spc}">${esc(rl)} · ${e.confidence}/100</span>
           ${scanBadge}
         </div>
-        <div class="vault-secret" onclick="copySecret('${esc(e.secret||'')}',this)" title="Click to copy">${esc((e.secret||'').slice(0,120))}${(e.secret||'').length>120?'…':''}</div>
+        <div class="vault-secret btn-copy-secret" data-secret="${esc(e.secret||'')}" title="Click to copy">${esc((e.secret||'').slice(0,120))}${(e.secret||'').length>120?'…':''}</div>
         ${helioBtn}
         <div class="vault-meta" style="margin-top:6px">
           <a href="${esc(e.commit_url)}" target="_blank">${esc(e.repo)}</a>
@@ -703,6 +750,30 @@
       el.style.outline = ok ? '1px solid var(--green)' : '1px solid var(--yellow)';
       setTimeout(() => { el.style.outline = orig; }, 800);
       if (!ok) _showHelioToast('⚠ Copy gagal — coba Ctrl+C manual');
+    });
+  }
+
+  // ── Vault type pill counts ────────────────────────────────────────────────
+  function _updateTypePillCounts() {
+    const counts = {
+      all:      _vaultEntries.length,
+      eth:      _vaultEntries.filter(e => _ETH_TYPES.has(e.type)).length,
+      mnemonic: _vaultEntries.filter(e => _MNEMONIC_TYPES.has(e.type)).length,
+      btc:      _vaultEntries.filter(e => _BTC_TYPES.has(e.type)).length,
+      pem:      _vaultEntries.filter(e => _PEM_TYPES.has(e.type)).length,
+      api:      _vaultEntries.filter(e => _APIKEY_TYPES.has(e.type)).length,
+    };
+    const labels = {
+      all: 'All Types', eth: '🔑 ETH Key', mnemonic: '📝 Mnemonic',
+      btc: '₿ BTC WIF', pem: '🔐 PEM Key', api: '🔗 API Key',
+    };
+    document.querySelectorAll('#vault-type-pills .type-pill').forEach(pill => {
+      const onclick = pill.getAttribute('onclick') || '';
+      const match = onclick.match(/setVaultTypeFilter\('(\w+)'/);
+      if (!match) return;
+      const key = match[1];
+      const cnt = counts[key] ?? 0;
+      pill.innerHTML = `${labels[key] || key}${cnt ? ` <span style="background:rgba(255,255,255,.12);border-radius:8px;padding:0 5px;font-size:10px">${cnt}</span>` : ''}`;
     });
   }
 
@@ -900,13 +971,19 @@
     setTimeout(() => { msg.textContent = ''; }, 3500);
   }
 
-  // ── Helio button event delegation (avoids quote-escaping issues in innerHTML) ──
+  // ── Event delegation — Helio buttons + vault secret copy ─────────────────
   document.addEventListener('click', function(e) {
-    const btn = e.target.closest('.btn-helio-action');
-    if (!btn) return;
-    const secret = btn.dataset.secret;
-    const type   = btn.dataset.type;
-    if (secret) openInHelio(secret, type);
+    const helioBtn = e.target.closest('.btn-helio-action');
+    if (helioBtn) {
+      const secret = helioBtn.dataset.secret;
+      const type   = helioBtn.dataset.type;
+      if (secret) openInHelio(secret, type);
+      return;
+    }
+    const copyEl = e.target.closest('.btn-copy-secret');
+    if (copyEl) {
+      copySecret(copyEl.dataset.secret || '', copyEl);
+    }
   });
 
   // ── Init ──────────────────────────────────────────────────────────────────
