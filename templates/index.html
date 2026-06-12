@@ -30,9 +30,10 @@
     .qbadge-low   { color: var(--red); }
 
     .container { max-width: 1160px; margin: 0 auto; padding: 16px; }
-    .grid { display: grid; grid-template-columns: 320px 1fr; gap: 16px; }
+    .grid { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 16px; }
+    .grid > div { min-width: 0; }
 
-    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; overflow: hidden; }
     .card + .card { margin-top: 12px; }
     .card h2 { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 14px; }
 
@@ -181,7 +182,7 @@
     /* ── Mobile ─────────────────────────────────────────────── */
     @media(max-width:768px){
       .container { padding: 10px; }
-      .grid { grid-template-columns: 1fr; gap: 10px; }
+      .grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
       .card { padding: 14px; }
       .card + .card { margin-top: 10px; }
 
