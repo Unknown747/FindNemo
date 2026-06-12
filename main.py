@@ -475,9 +475,21 @@ CODE_DORKS = [
 ]
 
 
-def _github_request(url, params, extra_accept=None, _depth=0):
+def _interruptible_wait(seconds, stop_check=None):
+    """Sleep up to `seconds`, polling stop_check every 0.5s. Returns True if stopped."""
+    end = time.time() + seconds
+    while time.time() < end:
+        if stop_check and stop_check():
+            return True
+        time.sleep(min(0.5, end - time.time()))
+    return False
+
+
+def _github_request(url, params, extra_accept=None, _depth=0, stop_check=None):
     """Shared rate-limit-aware GitHub GET helper."""
     if _depth > 4:
+        return None
+    if stop_check and stop_check():
         return None
     token = rotator.current()
     headers = rotator.headers(token)
@@ -490,7 +502,7 @@ def _github_request(url, params, extra_accept=None, _depth=0):
                 rotator.mark_invalid(token)
             next_tok = rotator.current()
             if next_tok and next_tok != token:
-                return _github_request(url, params, extra_accept, _depth + 1)
+                return _github_request(url, params, extra_accept, _depth + 1, stop_check)
             return None
         if r.status_code in (403, 429):
             reset_ts = int(r.headers.get('X-RateLimit-Reset', time.time() + 61))
@@ -498,11 +510,12 @@ def _github_request(url, params, extra_accept=None, _depth=0):
                 rotator.mark_rate_limited(token, reset_ts + 2)
             next_tok = rotator.current()
             if next_tok and next_tok != token:
-                return _github_request(url, params, extra_accept, _depth + 1)
+                return _github_request(url, params, extra_accept, _depth + 1, stop_check)
             wait = max(reset_ts - int(time.time()), 10) + 2
             logger.warning(f'Rate-limited — waiting {wait}s…')
-            time.sleep(wait)
-            return _github_request(url, params, extra_accept, _depth + 1)
+            if _interruptible_wait(wait, stop_check):
+                return None
+            return _github_request(url, params, extra_accept, _depth + 1, stop_check)
         if r.status_code == 422:
             return None
         r.raise_for_status()
@@ -512,35 +525,35 @@ def _github_request(url, params, extra_accept=None, _depth=0):
         return None
 
 
-def query_commits(dork, page=1, _depth=0):
+def query_commits(dork, page=1, _depth=0, stop_check=None):
     data = _github_request(COMMIT_API, {
         'q': dork, 'per_page': 30, 'page': page,
         'sort': 'committer-date', 'order': 'desc'
-    }, _depth=_depth)
+    }, _depth=_depth, stop_check=stop_check)
     if not data:
         return {}
     items = data.get('items', [])
     if len(items) == 30 and page < 3:
-        time.sleep(1)
-        nxt = query_commits(dork, page + 1, _depth)
+        if _interruptible_wait(1, stop_check):
+            return {'items': items, 'total_count': data.get('total_count', 0)}
+        nxt = query_commits(dork, page + 1, _depth, stop_check)
         items += nxt.get('items', [])
     return {'items': items, 'total_count': data.get('total_count', 0)}
 
 
-def query_code(dork, page=1):
+def query_code(dork, page=1, stop_check=None):
     """Search GitHub file contents. Returns list of code items."""
-    # text-match accept header gives us the matched fragment in the file
     accept = 'application/vnd.github.v3.text-match+json'
     data = _github_request(CODE_API, {
         'q': dork, 'per_page': 30, 'page': page
-    }, extra_accept=accept)
+    }, extra_accept=accept, stop_check=stop_check)
     if not data:
         return []
     items = data.get('items', [])
-    # Fetch page 2 if full result set
     if len(items) == 30 and page < 2:
-        time.sleep(1.5)
-        items += query_code(dork, page + 1)
+        if _interruptible_wait(1.5, stop_check):
+            return items
+        items += query_code(dork, page + 1, stop_check)
     return items
 
 
@@ -782,10 +795,25 @@ def run_crypto_search(keyword=None, output_dir='./crypto_output',
         ] + code_dorks
 
     def _check_rate_limit():
-        """Warn in Live Log if all tokens are currently rate-limited."""
+        """Pause scan with countdown if all tokens are rate-limited. Returns True if stopped."""
         wait = rotator.soonest_available()
-        if wait > 1:
-            log(f'⏳ All tokens rate-limited — waiting ~{int(wait)}s for reset…', 'warning')
+        if wait <= 1:
+            return False
+        log(f'⏸ All tokens rate-limited — scan paused for ~{int(wait)}s until reset…', 'warning')
+        # Show countdown every 15s so the user knows we're still alive
+        elapsed = 0
+        chunk = 15
+        while elapsed < wait:
+            if _should_stop():
+                return True
+            sleep_now = min(chunk, wait - elapsed)
+            _interruptible_sleep(sleep_now)
+            elapsed += sleep_now
+            remaining = max(int(wait - elapsed), 0)
+            if remaining > 0:
+                log(f'  ⏳ Resuming in ~{remaining}s…', 'warning')
+        log('▶ Rate limit reset — resuming scan.', 'info')
+        return False
 
     log(f"[PHASE 1] Code search — {len(code_dorks)} queries targeting file contents")
     for i, (dork, tier) in enumerate(code_dorks, 1):
@@ -793,9 +821,11 @@ def run_crypto_search(keyword=None, output_dir='./crypto_output',
             log('⏹ Scan stopped by user.', 'warning')
             break
 
-        _check_rate_limit()
+        if _check_rate_limit():
+            log('⏹ Scan stopped by user.', 'warning')
+            break
         log(f'  [{i}/{len(code_dorks)}] [{tier}] {dork[:70]}')
-        items = query_code(dork)
+        items = query_code(dork, stop_check=_should_stop)
         if not items:
             log(f'    → 0 files found')
             if _interruptible_sleep(rate_limit * 0.4):
@@ -833,10 +863,12 @@ def run_crypto_search(keyword=None, output_dir='./crypto_output',
             log('⏹ Scan stopped by user.', 'warning')
             break
 
-        _check_rate_limit()
+        if _check_rate_limit():
+            log('⏹ Scan stopped by user.', 'warning')
+            break
         log(f'  [{i}/{len(dorks)}] [{tier}] "{dork[:60]}"')
 
-        data = query_commits(dork)
+        data = query_commits(dork, stop_check=_should_stop)
         total = data.get('total_count', 0)
 
         if total == 0:
