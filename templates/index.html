@@ -147,17 +147,18 @@
     .helio-modal .btn-close-modal { background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:5px; padding:10px 14px; cursor:pointer; font-size:13px; margin-left:auto; }
 
     /* Vault toolbar */
-    .vault-toolbar { display:flex; flex-direction:column; gap:7px; margin-bottom:10px; }
+    .vault-toolbar { display:flex; flex-direction:column; gap:6px; margin-bottom:10px; }
     .vault-toolbar-row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
     .vault-toolbar-row input { flex:1; min-width:120px; }
-    .vault-risk-pills { display:flex; gap:4px; flex-wrap:wrap; }
-    .risk-pill { padding:5px 10px; border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; border:1px solid transparent; transition:all .15s; touch-action:manipulation; }
+    .pill-strip { display:flex; gap:4px; overflow-x:auto; flex-wrap:nowrap; -webkit-overflow-scrolling:touch; scrollbar-width:none; padding-bottom:2px; }
+    .pill-strip::-webkit-scrollbar { display:none; }
+    .risk-pill { padding:5px 10px; border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; border:1px solid transparent; transition:all .15s; touch-action:manipulation; white-space:nowrap; flex-shrink:0; }
     .risk-pill.all     { background:#1f2937; color:var(--muted); border-color:var(--border); }
     .risk-pill.crit    { background:#2d1b1b; color:var(--red); border-color:#3d1b1b; }
     .risk-pill.high    { background:#2d1e14; color:var(--orange); border-color:#3d2014; }
     .risk-pill.medium  { background:#2d2714; color:var(--yellow); border-color:#3d3014; }
     .risk-pill.active  { outline:2px solid currentColor; }
-    .type-pill { padding:5px 10px; border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; border:1px solid transparent; transition:all .15s; touch-action:manipulation; }
+    .type-pill { padding:5px 10px; border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; border:1px solid transparent; transition:all .15s; touch-action:manipulation; white-space:nowrap; flex-shrink:0; }
     .type-pill.active  { outline:2px solid currentColor; }
     .type-pill.tp-all  { background:#1f2937; color:var(--muted); border-color:var(--border); }
     .type-pill.tp-eth  { background:#0d2040; color:var(--blue); border-color:#1a3060; }
@@ -187,28 +188,15 @@
       header { padding: 10px 14px; }
       header h1 { font-size: 14px; }
 
-      /* Stats: 3 cols top row, 2 cols bottom */
+      /* Stats: 3 cols on mobile */
       .stats { grid-template-columns: repeat(3, 1fr); }
-      .stat:nth-child(4), .stat:nth-child(5) { grid-column: span 1; }
       .stat .val { font-size: 18px; }
 
       /* Log shorter on mobile */
       #log { height: 220px; font-size: 11px; }
 
-      /* Vault toolbar pills scroll horizontally */
-      .vault-risk-pills, #vault-type-pills { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; padding-bottom: 2px; }
-      .vault-risk-pills::-webkit-scrollbar, #vault-type-pills::-webkit-scrollbar { display: none; }
-      .vault-toolbar-row { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-      #vault-type-pills { flex-wrap: nowrap; }
-
-      /* Scan filter pills scroll */
-      #scan-type-pills { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
-      #scan-type-pills::-webkit-scrollbar { display: none; }
-
-      /* Buttons full-width on mobile where needed */
+      /* Buttons gap */
       .btn-row { gap: 6px; }
-
-      /* helio modal full-width bottom sheet already handled above */
     }
   </style>
 </head>
@@ -305,10 +293,9 @@
         <!-- THIS SCAN findings -->
         <div class="panel" id="panel-findings">
           <div id="scan-toolbar" style="display:none;margin-bottom:10px">
-            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-              <input type="text" id="scan-search" placeholder="Filter repo, type, message…"
-                     style="flex:1;min-width:140px" oninput="renderFindings()" />
-              <div class="vault-risk-pills" id="scan-type-pills">
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <input type="text" id="scan-search" placeholder="Filter repo, type, message…" oninput="renderFindings()" />
+              <div class="pill-strip" id="scan-type-pills">
                 <span class="risk-pill all active" onclick="setScanType('all',this)">All</span>
                 <span class="risk-pill crit"        onclick="setScanType('privkey',this)">Private Key</span>
                 <span class="risk-pill high"         onclick="setScanType('mnemonic',this)">Mnemonic</span>
@@ -337,24 +324,21 @@
             <div class="vault-toolbar-row">
               <input type="text" id="vault-search" placeholder="Search secret, repo, type…" oninput="renderVault()" />
               <button class="btn btn-subtle btn-sm" onclick="loadVault()">↺</button>
-              <button class="btn btn-danger  btn-sm" onclick="clearVault()">🗑 Clear Vault</button>
+              <button class="btn btn-danger btn-sm" onclick="clearVault()">🗑 Clear</button>
             </div>
-            <div class="vault-toolbar-row" style="gap:10px">
-              <div id="vault-risk-pills" class="vault-risk-pills">
-                <span class="risk-pill all active" onclick="setRiskFilter('all',this)">All Risk</span>
-                <span class="risk-pill crit"        onclick="setRiskFilter('CRITICAL',this)">CRITICAL</span>
-                <span class="risk-pill high"         onclick="setRiskFilter('HIGH',this)">HIGH</span>
-                <span class="risk-pill medium"       onclick="setRiskFilter('MEDIUM',this)">MEDIUM</span>
-              </div>
-              <div style="width:1px;height:16px;background:var(--border);flex-shrink:0"></div>
-              <div id="vault-type-pills" class="vault-risk-pills">
-                <span class="type-pill tp-all active" onclick="setVaultTypeFilter('all',this)">All Types</span>
-                <span class="type-pill tp-eth"         onclick="setVaultTypeFilter('eth',this)">🔑 ETH Key</span>
-                <span class="type-pill tp-mnm"         onclick="setVaultTypeFilter('mnemonic',this)">📝 Mnemonic</span>
-                <span class="type-pill tp-btc"         onclick="setVaultTypeFilter('btc',this)">₿ BTC WIF</span>
-                <span class="type-pill tp-pem"         onclick="setVaultTypeFilter('pem',this)">🔐 PEM Key</span>
-                <span class="type-pill tp-api"         onclick="setVaultTypeFilter('api',this)">🔗 API Key</span>
-              </div>
+            <div id="vault-risk-pills" class="pill-strip">
+              <span class="risk-pill all active" onclick="setRiskFilter('all',this)">All Risk</span>
+              <span class="risk-pill crit"        onclick="setRiskFilter('CRITICAL',this)">CRITICAL</span>
+              <span class="risk-pill high"         onclick="setRiskFilter('HIGH',this)">HIGH</span>
+              <span class="risk-pill medium"       onclick="setRiskFilter('MEDIUM',this)">MEDIUM</span>
+            </div>
+            <div id="vault-type-pills" class="pill-strip">
+              <span class="type-pill tp-all active" onclick="setVaultTypeFilter('all',this)">All Types</span>
+              <span class="type-pill tp-eth"         onclick="setVaultTypeFilter('eth',this)">🔑 ETH Key</span>
+              <span class="type-pill tp-mnm"         onclick="setVaultTypeFilter('mnemonic',this)">📝 Mnemonic</span>
+              <span class="type-pill tp-btc"         onclick="setVaultTypeFilter('btc',this)">₿ BTC WIF</span>
+              <span class="type-pill tp-pem"         onclick="setVaultTypeFilter('pem',this)">🔐 PEM Key</span>
+              <span class="type-pill tp-api"         onclick="setVaultTypeFilter('api',this)">🔗 API Key</span>
             </div>
           </div>
 
